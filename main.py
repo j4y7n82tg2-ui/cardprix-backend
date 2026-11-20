@@ -22,6 +22,7 @@ Lancer en local :
 Voir README.md pour le déploiement (Render / Railway / Fly.io / VPS).
 """
 import time
+import asyncio
 import logging
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -56,13 +57,13 @@ CACHE_TTL_SECONDS = 6 * 3600
 
 def _cache_get(key: str):
     hit = _cache.get(key)
-    if hit and time.time() - hit[0] < CACHE_TTL_SECONDS:
+    if hit and time.time() < hit[0]:
         return hit[1]
     return None
 
 
-def _cache_set(key: str, value: dict):
-    _cache[key] = (time.time(), value)
+def _cache_set(key: str, value: dict, ttl: int = CACHE_TTL_SECONDS):
+    _cache[key] = (time.time() + ttl, value)
 
 
 @app.on_event("shutdown")
@@ -91,6 +92,9 @@ SUPPORTED_LANGS = ["FR", "EN", "DE", "IT", "ES", "JP"]
 COND_FACTOR = {"MT": 1.10, "NM": 1.00, "EX": 0.85, "GD": 0.70, "LP": 0.60, "PL": 0.45, "PO": 0.30}
 
 
+PRICE_DEADLINE_SECONDS = 85   # Render coupe les requêtes trop longues (~100 s)
+
+
 @app.get("/price")
 async def price(cardId: str = Query(...), lang: str = Query("FR")):
     lang = lang.upper() if lang.upper() in SUPPORTED_LANGS else "FR"
@@ -105,48 +109,66 @@ async def price(cardId: str = Query(...), lang: str = Query("FR")):
 
     result = {"card": card, "cardmarket": None, "ebaySales": [], "warnings": [], "availableLanguages": []}
 
-    # --- Cardmarket : prix par (langue, état), toutes langues en un seul scrape ---
-    try:
-        url = card.get("cardmarketUrl")
-        if not url:
-            # Aucun lien officiel connu (ex. série très récente) : on le retrouve par recherche.
-            url = await find_product_url(card.get("name"), card.get("setName"), card.get("number"))
-            card["cardmarketUrl"] = url
-        result["cardmarket"] = await get_cardmarket_prices(url, lang=lang)
-        result["availableLanguages"] = list(result["cardmarket"].keys())
-    except CardmarketScrapeError as e:
-        log.warning("cardmarket scrape failed for %s: %s", cardId, e)
-        result["warnings"].append(
-            f"Prix Cardmarket exact indisponible ({e}). Prix ESTIMÉ à partir du prix moyen "
-            "Cardmarket, avec un coefficient par état — non spécifique à une langue."
-        )
-        if card.get("fallbackCardmarketPrice"):
-            # Seul un prix moyen existe : on le décline par état avec des coefficients
-            # indicatifs (le prix moyen Cardmarket correspond à peu près à Near Mint),
-            # pour que le choix de l'état change quand même le résultat. ESTIMATION.
-            p = float(card["fallbackCardmarketPrice"])
-            flat = {k: [round(p * COND_FACTOR[k], 2)] for k in COND_FACTOR}
-            result["cardmarket"] = {l: dict(flat) for l in SUPPORTED_LANGS}
-            result["availableLanguages"] = SUPPORTED_LANGS
-            result["cardmarketIsFallback"] = True
+    async def cardmarket_job():
+        """Prix Cardmarket par (langue, état) ; en cas d'échec -> estimation à partir du prix moyen."""
+        try:
+            url = card.get("cardmarketUrl")
+            if not url:
+                # Aucun lien officiel connu (ex. série très récente) : on le retrouve par recherche.
+                url = await find_product_url(card.get("name"), card.get("setName"), card.get("number"))
+                card["cardmarketUrl"] = url
+            result["cardmarket"] = await get_cardmarket_prices(url, lang=lang)
+            result["availableLanguages"] = list(result["cardmarket"].keys())
+        except Exception as e:   # CardmarketScrapeError, délai réseau, etc. : jamais de plantage
+            log.warning("cardmarket failed for %s: %s", cardId, e)
+            _cardmarket_fallback(result, card, str(e) or type(e).__name__)
 
-    # --- eBay : dernières ventes, biaisées vers la langue demandée ---
-    try:
-        query = f'pokemon {card["name"]} {card.get("setName", "")} {card.get("number", "")}'
-        sales = await get_ebay_sold(query, limit=5, lang=lang)
-        result["ebaySales"] = [
-            {"date": s["date"] or "", "price": s["price"], "cond": s["title"][:60]}
-            for s in sales
-        ]
-    except EbayScrapeError as e:
-        log.warning("ebay scrape failed for %s (%s): %s", cardId, lang, e)
-        result["warnings"].append(f"Ventes eBay indisponibles ({e}).")
+    async def ebay_job():
+        try:
+            query = f'pokemon {card["name"]} {card.get("setName", "")} {card.get("number", "")}'
+            sales = await get_ebay_sold(query, limit=5, lang=lang)
+            result["ebaySales"] = [
+                {"date": s["date"] or "", "price": s["price"], "cond": s["title"][:60]}
+                for s in sales
+            ]
+        except Exception as e:
+            log.warning("ebay failed for %s (%s): %s", cardId, lang, e)
+            result["warnings"].append(f"Ventes eBay indisponibles ({e or type(e).__name__}).")
+
+    # Les deux sources en PARALLÈLE, avec une échéance globale : au pire on renvoie
+    # ce qu'on a déjà (estimation) au lieu de laisser l'appli attendre dans le vide.
+    tasks = [asyncio.create_task(cardmarket_job()), asyncio.create_task(ebay_job())]
+    done, pending = await asyncio.wait(tasks, timeout=PRICE_DEADLINE_SECONDS)
+    for t in pending:
+        t.cancel()
+    if pending:
+        result["warnings"].append("Délai dépassé : certaines sources n'ont pas répondu à temps.")
+        if result["cardmarket"] is None:
+            _cardmarket_fallback(result, card, "délai dépassé")
 
     if result["cardmarket"] is None and not result["ebaySales"]:
-        raise HTTPException(502, "Aucune source de prix disponible pour cette carte actuellement.")
+        raise HTTPException(502, "Aucune source de prix disponible pour cette carte actuellement. "
+                                 + " ".join(result["warnings"]))
 
-    _cache_set(cache_key, result)
+    # Un résultat dégradé (estimation) n'est gardé que 10 min pour réessayer vite.
+    ttl = 600 if result.get("cardmarketIsFallback") or pending else CACHE_TTL_SECONDS
+    _cache_set(cache_key, result, ttl)
     return result
+
+
+def _cardmarket_fallback(result: dict, card: dict, reason: str):
+    result["warnings"].append(
+        f"Prix Cardmarket exact indisponible ({reason}). Prix ESTIMÉ à partir du prix moyen "
+        "Cardmarket, avec un coefficient par état — non spécifique à une langue."
+    )
+    if card.get("fallbackCardmarketPrice"):
+        # Seul un prix moyen existe : on le décline par état avec des coefficients
+        # indicatifs (le prix moyen correspond à peu près à Near Mint). ESTIMATION.
+        p = float(card["fallbackCardmarketPrice"])
+        flat = {k: [round(p * COND_FACTOR[k], 2)] for k in COND_FACTOR}
+        result["cardmarket"] = {l: dict(flat) for l in SUPPORTED_LANGS}
+        result["availableLanguages"] = SUPPORTED_LANGS
+        result["cardmarketIsFallback"] = True
 
 
 # --- Diagnostic : voir ce que le serveur voit réellement (pour régler le scraping) ---

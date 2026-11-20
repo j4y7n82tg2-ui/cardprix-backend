@@ -670,24 +670,38 @@ async function fetchPricing(){
     S.loading=false; render();
     return;
   }
-  if(!S.apiUrl){ S.loading=false; render(); return; }
+  if(!S.apiUrl){ S.loading=false; S.priceError="Aucun serveur configuré (⚙️ Réglages)."; render(); return; }
+  // Numéro de requête : si l'utilisateur change de carte/langue pendant l'attente,
+  // la réponse périmée est ignorée au lieu d'écraser l'écran.
+  const reqId = (S._priceReq = (S._priceReq||0) + 1);
+  S.priceError = '';
+  const ctrl = new AbortController();
+  const timer = setTimeout(()=>ctrl.abort(), 110000);   // le serveur répond en 85 s max
   try{
-    // `lang` sert à la recherche eBay côté serveur (Cardmarket renvoie toutes
-    // les langues en une seule fois, voir backend/scraper_cardmarket.py).
-    const r = await fetch(S.apiUrl.replace(/\/$/,'')+'/price?cardId='+encodeURIComponent(c.id)+'&lang='+encodeURIComponent(S.language));
-    const data = await r.json();
-    S.priceData = {...data, source:'live'};
-    // Le détail complet (rareté, illustrateur, année...) arrive avec les prix :
-    // on complète la carte affichée sans écraser une info déjà connue par du vide.
-    if(data.card && S.selected && S.selected.id===data.card.id){
-      const extra={}; Object.keys(data.card).forEach(k=>{ if(data.card[k]!==null && data.card[k]!==undefined && data.card[k]!=='') extra[k]=data.card[k]; });
-      S.selected = {...S.selected, ...extra};
+    const r = await fetch(S.apiUrl.replace(/\/$/,'')+'/price?cardId='+encodeURIComponent(c.id)+'&lang='+encodeURIComponent(S.language), {signal: ctrl.signal});
+    let data = null;
+    try{ data = await r.json(); }catch(_){ /* réponse non-JSON (page d'erreur) */ }
+    if(reqId !== S._priceReq) return;
+    if(!r.ok || !data || !data.cardmarket && !(data.ebaySales||[]).length){
+      S.priceData = null;
+      S.priceError = (data && data.detail) ? String(data.detail) : "Le serveur n'a pas pu fournir de prix (erreur "+r.status+"). Il est peut-être en train de démarrer : réessaie dans un instant.";
+    } else {
+      S.priceData = {...data, source:'live'};
+      // Le détail complet (rareté, illustrateur, année...) arrive avec les prix :
+      // on complète la carte affichée sans écraser une info connue par du vide.
+      if(data.card && S.selected && S.selected.id===data.card.id){
+        const extra={}; Object.keys(data.card).forEach(k=>{ if(data.card[k]!==null && data.card[k]!==undefined && data.card[k]!=='') extra[k]=data.card[k]; });
+        S.selected = {...S.selected, ...extra};
+      }
     }
   }catch(e){
+    if(reqId !== S._priceReq) return;
     S.priceData = null;
-    S.priceError = "Impossible de récupérer les prix (" + e.message + ").";
-  }
-  S.loading=false; render();
+    S.priceError = e.name==='AbortError'
+      ? "Le serveur met trop de temps à répondre (il se réveille peut-être). Réessaie dans un instant."
+      : "Impossible de joindre le serveur (" + e.message + ").";
+  } finally { clearTimeout(timer); }
+  if(reqId === S._priceReq){ S.loading=false; render(); }
 }
 
 function setLanguage(key){
@@ -984,7 +998,8 @@ function vintedTabHtml(c){
   const desc = suggestedDescription(c, S.condition, condLabel);
   return `
   ${S.loading ? `<div class="card loading"><div class="spin"></div> Analyse des prix…</div>` : ''}
-  ${!S.loading && S.priceError ? `<div class="card empty">${S.priceError}</div>` : ''}
+  ${S.loading ? `<div class="footnote" style="text-align:center;margin:-4px 0 10px">La première recherche d'une carte peut prendre jusqu'à 1 minute.</div>` : ''}
+  ${!S.loading && !S.priceData ? `<div class="card empty">${S.priceError || "Aucun prix reçu pour l'instant."}<br><button class="btn secondary" style="margin-top:12px" onclick="fetchPricing()">↻ Réessayer</button></div>` : ''}
   ${!S.loading && S.priceData && (S.priceData.warnings||[]).length ? `
     <div class="banner">⚠️ <span>${S.priceData.warnings.join(' ')}</span></div>` : ''}
   ${!S.loading && S.priceData ? `
