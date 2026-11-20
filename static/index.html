@@ -1004,7 +1004,7 @@ function vintedTabHtml(c){
   const title = suggestedTitle(c, condLabel);
   const desc = suggestedDescription(c, S.condition, condLabel);
   return `
-  ${S.loading ? `<div class="card loading"><div class="spin"></div> ${S.loadingPrecise?'Lecture des annonces Cardmarket…':'Analyse des prix…'}</div>` : ''}
+  ${S.loading ? `<div class="card loading"><div class="spin"></div> ${S.loadingPrecise?'Lecture des annonces…':'Analyse des prix…'}</div>` : ''}
   ${S.loading ? `<div class="footnote" style="text-align:center;margin:-4px 0 10px">${S.loadingPrecise?"La lecture détaillée prend jusqu'à 1 minute (instantanée ensuite pendant 24 h).":"Quelques secondes."}</div>` : ''}
   ${!S.loading && !S.priceData ? `<div class="card empty">${S.priceError || "Aucun prix reçu pour l'instant."}<br><button class="btn secondary" style="margin-top:12px" onclick="fetchPricing()">↻ Réessayer</button></div>` : ''}
   ${!S.loading && S.priceData && (S.priceData.warnings||[]).length ? `
@@ -1012,7 +1012,7 @@ function vintedTabHtml(c){
   ${!S.loading && S.priceData && S.priceData.mode==='aggregate' ? `
   <div class="card reveal">
     <div class="section-title">🔎 Prix précis pour la langue ${LANGUAGES.find(l=>l.key===S.language).flag} ${LANGUAGES.find(l=>l.key===S.language).label}</div>
-    <div class="footnote">Le prix affiché est la <b>moyenne Cardmarket toutes langues confondues</b>, déclinée par état avec des coefficients (estimation) : il ne change donc pas d'une langue à l'autre. Pour le prix réel de cette langue, lis les annonces Cardmarket (les 5 plus bas prix par état).</div>
+    <div class="footnote">Le prix affiché est la <b>moyenne Cardmarket toutes langues confondues</b>, déclinée par état avec des coefficients (estimation) : il ne change donc pas d'une langue à l'autre. Pour le prix réel de cette langue, lis les vraies annonces en vente (les 5 plus bas prix par état, marché CardTrader).</div>
     <button class="btn block" style="margin-top:10px" onclick="fetchPricing(true)">Lire les annonces ${LANGUAGES.find(l=>l.key===S.language).flag} (≈ 1 min)</button>
   </div>` : ''}
   ${!S.loading && S.priceData && S.priceData.mode==='precise' && S.priceData.cardmarketIsFallback ? `
@@ -1074,7 +1074,8 @@ function basisHtml(){
         </tr>`;
       }).join('')}
     </table>
-    <div class="footnote">Prix le plus bas par état pour les annonces <b>${LANGUAGES.find(l=>l.key===S.language).label}</b> (jusqu'à 5 annonces listées), marché Cardmarket (EUR).
+    <div class="footnote">Prix le plus bas par état pour les annonces <b>${LANGUAGES.find(l=>l.key===S.language).label}</b> (jusqu'à 5 annonces listées), ${S.priceData.priceSource==='cardtrader'?'annonces <b>CardTrader</b> (place de marché européenne, EUR — proche de Cardmarket mais pas identique).':'marché Cardmarket (EUR).'}
+      ${(S.priceData.estimatedConds||[]).length?` États sans annonce estimés à partir de l'état voisin : ${S.priceData.estimatedConds.map(k=>CONDITIONS.find(c=>c.key===k)?.label||k).join(', ')}.`:''}
       ${S.priceData.cardmarketIsFallback?' <b>⚠️ Estimation</b> : prix moyen Cardmarket (toutes langues) décliné par état avec des coefficients indicatifs (Near Mint = prix moyen, Excellent 85 %, Good 70 %, Light Played 60 %, Played 45 %, Poor 30 %). Identique pour toutes les langues tant que les annonces ne sont pas lues.':''}
       ${S.priceData.source==='demo'?' Exemple — le serveur fournira les vrais prix par état.':''}</div>
     <div style="height:14px"></div>

@@ -33,6 +33,7 @@ import card_search
 import cache as store
 from scraper_cardmarket import get_cardmarket_prices, find_product_url, snapshot, debug_rows, CardmarketScrapeError
 from scraper_ebay import get_ebay_sold, EbayScrapeError
+import scraper_cardtrader as ct
 from browser_pool import shutdown as shutdown_browser, uses_scraping_service
 
 logging.basicConfig(level=logging.INFO)
@@ -95,6 +96,25 @@ async def _compute_price(cardId: str, lang: str, force: bool = False) -> tuple[d
     card = await _get_card_cached(cardId)
     result = {"card": card, "mode": "precise", "cardmarket": None, "ebaySales": [], "warnings": [], "availableLanguages": []}
 
+    async def cardtrader_job():
+        """Annonces CardTrader (gratuit, par état ET par langue) ; sinon estimation à partir du prix moyen."""
+        try:
+            failed = None if force else await store.get(f"ctfail:{cardId}:{lang}")
+            if failed:
+                raise ct.CardTraderError(f"échec récent, pas de nouvel essai avant quelques heures : {failed}")
+            got = await ct.get_cardtrader_prices(card, lang)
+            result["cardmarket"] = got["cardmarket"]
+            result["availableLanguages"] = [lang]
+            result["priceSource"] = "cardtrader"
+            result["estimatedConds"] = got["estimatedConds"]
+            result["warnings"].extend(got["notes"])
+        except Exception as e:
+            log.warning("cardtrader failed for %s: %s", cardId, e)
+            reason = str(e) or type(e).__name__
+            if "échec récent" not in reason:
+                await store.set(f"ctfail:{cardId}:{lang}", reason[:300], FAIL_TTL)
+            _cardmarket_fallback(result, card, reason, source="CardTrader")
+
     async def cardmarket_job():
         """Prix Cardmarket par (langue, état) ; en cas d'échec -> estimation à partir du prix moyen."""
         try:
@@ -133,7 +153,11 @@ async def _compute_price(cardId: str, lang: str, force: bool = False) -> tuple[d
 
     # Les deux sources en PARALLÈLE, avec une échéance globale : au pire on renvoie
     # ce qu'on a déjà (estimation) au lieu de laisser l'appli attendre dans le vide.
-    tasks = [asyncio.create_task(cardmarket_job()), asyncio.create_task(ebay_job())]
+    use_ct = ct.configured()
+    # Avec CardTrader on évite le scraping Cardmarket (bloqué) ; eBay n'est tenté que si un service de scraping est branché.
+    tasks = [asyncio.create_task(cardtrader_job() if use_ct else cardmarket_job())]
+    if uses_scraping_service() or not use_ct:
+        tasks.append(asyncio.create_task(ebay_job()))
     done, pending = await asyncio.wait(tasks, timeout=PRICE_DEADLINE_SECONDS)
     for t in pending:
         t.cancel()
@@ -234,9 +258,9 @@ async def price(cardId: str = Query(...), lang: str = Query("FR"),
     return _serve(entry)
 
 
-def _cardmarket_fallback(result: dict, card: dict, reason: str):
+def _cardmarket_fallback(result: dict, card: dict, reason: str, source: str = "Cardmarket"):
     result["warnings"].append(
-        f"Prix Cardmarket exact indisponible ({reason}). Prix ESTIMÉ à partir du prix moyen "
+        f"Prix {source} exact indisponible ({reason}). Prix ESTIMÉ à partir du prix moyen "
         "Cardmarket, avec un coefficient par état — non spécifique à une langue."
     )
     if card.get("fallbackCardmarketPrice"):
@@ -282,7 +306,15 @@ async def debug_rows_ep(url: str, sel: str | None = None):
 
 @app.get("/debug/config", include_in_schema=False)
 async def debug_config():
-    return {"scrapingService": uses_scraping_service(), "persistentCache": store.persistent()}
+    return {"scrapingService": uses_scraping_service(), "persistentCache": store.persistent(),
+            "cardtrader": ct.configured()}
+
+
+@app.get("/debug/cardtrader", include_in_schema=False)
+async def debug_cardtrader_ep(id: str, lang: str = "FR"):
+    """Ce que CardTrader renvoie pour une carte : série trouvée, fiche, 3 annonces brutes, prix lus."""
+    card = await _get_card_cached(id)
+    return await ct.debug_cardtrader(card, lang.upper())
 
 
 @app.get("/debug/info", include_in_schema=False)
