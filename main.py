@@ -55,7 +55,8 @@ app.add_middleware(
 PRICE_FRESH = 24 * 3600
 PRICE_STALE_MAX = 7 * 24 * 3600
 DEGRADED_FRESH = 600            # un résultat "estimation" n'est gardé que 10 min
-CARD_TTL = 7 * 24 * 3600
+CARD_TTL = 24 * 3600            # contient le prix Cardmarket agrégé du jour
+FAIL_TTL = 6 * 3600             # un échec de lecture détaillée n'est pas retenté avant 6 h (sauf « Réessayer »)
 CMURL_TTL = 30 * 24 * 3600      # le lien Cardmarket d'une carte ne change pas
 _inflight: dict[str, asyncio.Task] = {}
 
@@ -89,22 +90,17 @@ COND_FACTOR = {"MT": 1.10, "NM": 1.00, "EX": 0.85, "GD": 0.70, "LP": 0.60, "PL":
 PRICE_DEADLINE_SECONDS = 85   # Render coupe les requêtes trop longues (~100 s)
 
 
-async def _compute_price(cardId: str, lang: str) -> tuple[dict, bool]:
+async def _compute_price(cardId: str, lang: str, force: bool = False) -> tuple[dict, bool]:
     """Lit les sources (en parallèle) et renvoie (résultat, dégradé?). Lève HTTPException si rien."""
-    card = await store.get(f"card:{cardId}")
-    if not card:
-        card = await card_search.get_card(cardId)
-        if card:
-            await store.set(f"card:{cardId}", card, CARD_TTL)
-    if not card:
-        raise HTTPException(404, "Carte introuvable.")
-    card = dict(card)
-
-    result = {"card": card, "cardmarket": None, "ebaySales": [], "warnings": [], "availableLanguages": []}
+    card = await _get_card_cached(cardId)
+    result = {"card": card, "mode": "precise", "cardmarket": None, "ebaySales": [], "warnings": [], "availableLanguages": []}
 
     async def cardmarket_job():
         """Prix Cardmarket par (langue, état) ; en cas d'échec -> estimation à partir du prix moyen."""
         try:
+            failed = None if force else await store.get(f"cmfail:{cardId}:{lang}")
+            if failed:
+                raise CardmarketScrapeError(f"échec récent, pas de nouvel essai avant quelques heures : {failed}")
             url = card.get("cardmarketUrl") or await store.get(f"cmurl:{cardId}")
             if not url:
                 # Aucun lien connu (ex. série très récente) : on le retrouve par recherche, une seule fois.
@@ -115,10 +111,15 @@ async def _compute_price(cardId: str, lang: str) -> tuple[dict, bool]:
             result["availableLanguages"] = list(result["cardmarket"].keys())
         except Exception as e:   # CardmarketScrapeError, délai réseau, etc. : jamais de plantage
             log.warning("cardmarket failed for %s: %s", cardId, e)
-            _cardmarket_fallback(result, card, str(e) or type(e).__name__)
+            reason = str(e) or type(e).__name__
+            if "échec récent" not in reason:
+                await store.set(f"cmfail:{cardId}:{lang}", reason[:300], FAIL_TTL)
+            _cardmarket_fallback(result, card, reason)
 
     async def ebay_job():
         try:
+            if not force and await store.get(f"ebfail:{cardId}:{lang}"):
+                return
             query = f'pokemon {card["name"]} {card.get("setName", "")} {card.get("number", "")}'
             sales = await get_ebay_sold(query, limit=5, lang=lang)
             result["ebaySales"] = [
@@ -127,6 +128,7 @@ async def _compute_price(cardId: str, lang: str) -> tuple[dict, bool]:
             ]
         except Exception as e:
             log.warning("ebay failed for %s (%s): %s", cardId, lang, e)
+            await store.set(f"ebfail:{cardId}:{lang}", "1", FAIL_TTL)
             result["warnings"].append(f"Ventes eBay indisponibles ({e or type(e).__name__}).")
 
     # Les deux sources en PARALLÈLE, avec une échéance globale : au pire on renvoie
@@ -147,18 +149,42 @@ async def _compute_price(cardId: str, lang: str) -> tuple[dict, bool]:
     return result, degraded
 
 
-async def _compute_and_store(key: str, cardId: str, lang: str) -> dict:
-    result, degraded = await _compute_price(cardId, lang)
+async def _get_card_cached(cardId: str) -> dict:
+    card = await store.get(f"card:{cardId}")
+    if not card:
+        card = await card_search.get_card(cardId)
+        if card:
+            await store.set(f"card:{cardId}", card, CARD_TTL)
+    if not card:
+        raise HTTPException(404, "Carte introuvable.")
+    return dict(card)
+
+
+def _aggregate_result(card: dict) -> dict:
+    """Réponse INSTANTANÉE : prix Cardmarket moyen (TCGdex), décliné par état. Aucune lecture de page."""
+    result = {"card": card, "mode": "aggregate", "cardmarket": None, "ebaySales": [],
+              "warnings": [], "availableLanguages": []}
+    p = card.get("fallbackCardmarketPrice")
+    if p:
+        flat = {k: [round(float(p) * COND_FACTOR[k], 2)] for k in COND_FACTOR}
+        result["cardmarket"] = {l: dict(flat) for l in SUPPORTED_LANGS}
+        result["availableLanguages"] = SUPPORTED_LANGS
+        result["cardmarketIsFallback"] = True
+    return result
+
+
+async def _compute_and_store(key: str, cardId: str, lang: str, force: bool = False) -> dict:
+    result, degraded = await _compute_price(cardId, lang, force)
     entry = {"t": time.time(), "degraded": degraded, "v": result}
     await store.set(key, entry, PRICE_STALE_MAX)
     return entry
 
 
-def _start_refresh(key: str, cardId: str, lang: str) -> asyncio.Task:
+def _start_refresh(key: str, cardId: str, lang: str, force: bool = False) -> asyncio.Task:
     """Une seule mise à jour à la fois par (carte, langue) : évite de payer deux fois les mêmes pages."""
     task = _inflight.get(key)
     if task is None:
-        task = asyncio.create_task(_compute_and_store(key, cardId, lang))
+        task = asyncio.create_task(_compute_and_store(key, cardId, lang, force))
         _inflight[key] = task
 
         def _done(t, key=key):
@@ -178,18 +204,33 @@ def _serve(entry: dict, refreshing: bool = False) -> dict:
 
 
 @app.get("/price")
-async def price(cardId: str = Query(...), lang: str = Query("FR")):
+async def price(cardId: str = Query(...), lang: str = Query("FR"),
+                precise: int = Query(0), force: int = Query(0)):
+    """
+    precise=0 (défaut) : réponse immédiate — si une lecture détaillée de cette carte/langue est déjà
+                         en cache (24 h) elle est renvoyée, sinon prix Cardmarket moyen (toutes langues).
+    precise=1          : lit les annonces Cardmarket de la langue (5 plus bas prix par état) + eBay ;
+                         lent (jusqu'à ~1 min) la première fois, instantané ensuite pendant 24 h.
+    force=1            : ignore le cache et la mémoire des échecs récents (bouton « Réessayer »).
+    """
     lang = lang.upper() if lang.upper() in SUPPORTED_LANGS else "FR"
     key = f"price:{cardId}:{lang}"
     entry = await store.get(key)
-    if entry:
+    if entry and not force:
         age = time.time() - entry["t"]
         if age < (DEGRADED_FRESH if entry["degraded"] else PRICE_FRESH):
             return _serve(entry)                           # frais : instantané
         if not entry["degraded"] and age < PRICE_STALE_MAX:
             _start_refresh(key, cardId, lang)              # périmé : on répond tout de suite
             return _serve(entry, refreshing=True)          # et on met à jour en arrière-plan
-    entry = await asyncio.shield(_start_refresh(key, cardId, lang))
+
+    if not precise:
+        card = await _get_card_cached(cardId)
+        out = _aggregate_result(card)
+        out["ageSeconds"] = 0
+        return out
+
+    entry = await asyncio.shield(_start_refresh(key, cardId, lang, bool(force)))
     return _serve(entry)
 
 

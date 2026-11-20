@@ -136,7 +136,21 @@ async def _get_card_tcgdex(card_id: str) -> dict | None:
     info = await _tcgdex_set(sid)
     rd = info.get("releaseDate") or ""
     cm = ((c.get("pricing") or {}).get("cardmarket")) or {}
-    price = cm.get("trend") or cm.get("avg") or cm.get("low")
+    # Prix Cardmarket agrégés fournis par TCGdex (toutes langues et tous états
+    # confondus, mis à jour chaque jour). Variante "holo" si la carte l'est, sinon normale.
+    is_holo = "holo" in str(c.get("rarity", "")).lower()
+    def pick(field):
+        order = [f"{field}-holo", field] if is_holo else [field, f"{field}-holo"]
+        for k in order:
+            if cm.get(k):
+                return cm[k]
+        return None
+    agg = {k: pick(k) for k in ("trend", "avg", "low", "avg7", "avg30")}
+    agg["updated"] = cm.get("updated")
+    agg["variant"] = "holo" if (is_holo and (cm.get("trend-holo") or cm.get("avg-holo"))) else "normal"
+    price = agg["trend"] or agg["avg"] or agg["low"]
+    if not any(agg[k] for k in ("trend", "avg", "low")):
+        agg = None
     card = {
         "id": c.get("id", card_id),
         "name": c.get("name"),
@@ -149,6 +163,7 @@ async def _get_card_tcgdex(card_id: str) -> dict | None:
         "img": _img(c.get("image")),
         "cardmarketUrl": None,
         "fallbackCardmarketPrice": price,
+        "cardmarketPricing": agg,
     }
     # Lien Cardmarket officiel : TCGdex n'en fournit pas ; pokemontcg.io oui pour
     # les cartes qu'il connaît. On ne l'accepte que si nom ET numéro concordent
