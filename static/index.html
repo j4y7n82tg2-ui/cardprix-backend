@@ -674,6 +674,12 @@ async function fetchPricing(){
     const r = await fetch(S.apiUrl.replace(/\/$/,'')+'/price?cardId='+encodeURIComponent(c.id)+'&lang='+encodeURIComponent(S.language));
     const data = await r.json();
     S.priceData = {...data, source:'live'};
+    // Le détail complet (rareté, illustrateur, année...) arrive avec les prix :
+    // on complète la carte affichée sans écraser une info déjà connue par du vide.
+    if(data.card && S.selected && S.selected.id===data.card.id){
+      const extra={}; Object.keys(data.card).forEach(k=>{ if(data.card[k]!==null && data.card[k]!==undefined && data.card[k]!=='') extra[k]=data.card[k]; });
+      S.selected = {...S.selected, ...extra};
+    }
   }catch(e){
     S.priceData = null;
     S.priceError = "Impossible de récupérer les prix (" + e.message + ").";
