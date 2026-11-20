@@ -25,11 +25,11 @@ import time
 import logging
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pathlib import Path
 
 import card_search
-from scraper_cardmarket import get_cardmarket_prices, CardmarketScrapeError
+from scraper_cardmarket import get_cardmarket_prices, find_product_url, snapshot, CardmarketScrapeError
 from scraper_ebay import get_ebay_sold, EbayScrapeError
 from browser_pool import shutdown as shutdown_browser
 
@@ -87,6 +87,9 @@ async def search(q: str = Query(..., min_length=2)):
 
 SUPPORTED_LANGS = ["FR", "EN", "DE", "IT", "ES", "JP"]
 
+# Coefficients indicatifs par état, relatifs à Near Mint (utilisés SEULEMENT en repli).
+COND_FACTOR = {"MT": 1.10, "NM": 1.00, "EX": 0.85, "GD": 0.70, "LP": 0.60, "PL": 0.45, "PO": 0.30}
+
 
 @app.get("/price")
 async def price(cardId: str = Query(...), lang: str = Query("FR")):
@@ -104,19 +107,25 @@ async def price(cardId: str = Query(...), lang: str = Query("FR")):
 
     # --- Cardmarket : prix par (langue, état), toutes langues en un seul scrape ---
     try:
-        result["cardmarket"] = await get_cardmarket_prices(card.get("cardmarketUrl"))
+        url = card.get("cardmarketUrl")
+        if not url:
+            # Aucun lien officiel connu (ex. série très récente) : on le retrouve par recherche.
+            url = await find_product_url(card.get("name"), card.get("setName"), card.get("number"))
+            card["cardmarketUrl"] = url
+        result["cardmarket"] = await get_cardmarket_prices(url)
         result["availableLanguages"] = list(result["cardmarket"].keys())
     except CardmarketScrapeError as e:
         log.warning("cardmarket scrape failed for %s: %s", cardId, e)
         result["warnings"].append(
-            f"Cardmarket indisponible ({e}) — prix de repli utilisé, non spécifique à une langue."
+            f"Prix Cardmarket exact indisponible ({e}). Prix ESTIMÉ à partir du prix moyen "
+            "Cardmarket, avec un coefficient par état — non spécifique à une langue."
         )
         if card.get("fallbackCardmarketPrice"):
-            # Pas de détail par état/langue dans ce cas : on renvoie le même
-            # prix agrégé pour chaque langue/état, clairement marqué comme
-            # repli côté frontend (voir cardmarketIsFallback).
-            p = card["fallbackCardmarketPrice"]
-            flat = {k: [p] for k in ["MT", "NM", "EX", "GD", "LP", "PL", "PO"]}
+            # Seul un prix moyen existe : on le décline par état avec des coefficients
+            # indicatifs (le prix moyen Cardmarket correspond à peu près à Near Mint),
+            # pour que le choix de l'état change quand même le résultat. ESTIMATION.
+            p = float(card["fallbackCardmarketPrice"])
+            flat = {k: [round(p * COND_FACTOR[k], 2)] for k in COND_FACTOR}
             result["cardmarket"] = {l: dict(flat) for l in SUPPORTED_LANGS}
             result["availableLanguages"] = SUPPORTED_LANGS
             result["cardmarketIsFallback"] = True
@@ -138,6 +147,49 @@ async def price(cardId: str = Query(...), lang: str = Query("FR")):
 
     _cache_set(cache_key, result)
     return result
+
+
+# --- Diagnostic : voir ce que le serveur voit réellement (pour régler le scraping) ---
+_DEBUG_HOSTS = ("cardmarket.com", "ebay.fr", "ebay.com")
+
+
+def _check_debug_url(url: str):
+    from urllib.parse import urlparse
+    host = (urlparse(url).hostname or "").lower()
+    if not any(host == h or host.endswith("." + h) for h in _DEBUG_HOSTS):
+        raise HTTPException(400, "Adresse non autorisée pour le diagnostic.")
+
+
+@app.get("/debug/shot", include_in_schema=False)
+async def debug_shot(url: str):
+    """Capture d'écran de ce que voit le navigateur du serveur (ex. page anti-robot ?)."""
+    _check_debug_url(url)
+    try:
+        return Response(await snapshot(url, png=True), media_type="image/png")
+    except Exception as e:
+        raise HTTPException(502, f"Capture impossible : {e}")
+
+
+@app.get("/debug/info", include_in_schema=False)
+async def debug_info(url: str):
+    _check_debug_url(url)
+    try:
+        return await snapshot(url)
+    except Exception as e:
+        raise HTTPException(502, f"Lecture impossible : {e}")
+
+
+@app.get("/debug/card", include_in_schema=False)
+async def debug_card(id: str):
+    """Réponse brute TCGdex + fiche normalisée + page Cardmarket trouvée (ou la raison de l'échec)."""
+    out = {"raw": await card_search.raw_tcgdex_card(id), "card": await card_search.get_card(id)}
+    try:
+        c = out["card"] or {}
+        out["cardmarketUrl"] = c.get("cardmarketUrl") or await find_product_url(
+            c.get("name"), c.get("setName"), c.get("number"))
+    except Exception as e:
+        out["cardmarketError"] = str(e)
+    return out
 
 
 # --- Interface web : le serveur sert aussi l'appli (même adresse que l'API) ---

@@ -50,6 +50,9 @@ input[type=text]:focus,select:focus{border-color:var(--accent)}
 .result-row{display:flex;gap:12px;align-items:center;padding:10px;border-radius:12px;background:var(--card2);
   border:1px solid var(--border);cursor:pointer;transition:.15s}
 .result-row:active{transform:scale(.98)}
+.ph{display:flex;align-items:center;justify-content:center;text-align:center;font-size:9px;line-height:1.15;color:var(--text2,#8a93a6);background:linear-gradient(160deg,var(--bg2),var(--border));border:1px dashed var(--border);border-radius:6px;overflow:hidden;padding:2px}
+.thumb.ph{width:40px;height:56px;flex-shrink:0}
+.selected-card .ph{width:64px;height:90px;flex-shrink:0;font-size:11px}
 .thumb{width:40px;height:56px;border-radius:6px;background:var(--bg2);flex-shrink:0;object-fit:cover;border:1px solid var(--border)}
 .rinfo{flex:1;min-width:0}
 .rname{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -850,13 +853,31 @@ function renderResults(){
     const matches = numberMatchesScan(c.number);
     return `
     <div class="result-row" onclick='selectCard(${JSON.stringify(c).replace(/'/g,"&#39;")})'>
-      <img class="thumb" src="${c.img||''}" onerror="this.style.visibility='hidden'">
+      ${imgHtml(c,'thumb')}
       <div class="rinfo">
         <div class="rname">${displayName(c.name)}${matches?`<span class="match-badge">✓ numéro</span>`:''}</div>
         <div class="rset">${c.setName} · ${c.number}</div>
       </div>
     </div>`;
   }).join('')}</div>`;
+}
+
+// Image de carte : essaie d'autres formats TCGdex avant d'afficher un cadre de remplacement.
+function imgHtml(c, cls){
+  if(!c.img) return `<div class="${cls||''} ph">${(c.setName||'').slice(0,18)}<br>#${c.number||'?'}</div>`;
+  return `<img ${cls?`class="${cls}"`:''} src="${c.img}" data-t="0" data-label="${(c.setName||'').slice(0,18).replace(/"/g,'')}#${c.number||'?'}" onerror="imgFail(this)">`;
+}
+function imgFail(el){
+  const steps = [u=>u.replace(/\/low\.webp$/,'/high.webp'), u=>u.replace(/\/high\.webp$/,'/high.png'), u=>u.replace(/\/high\.png$/,'/low.png')];
+  const t = parseInt(el.dataset.t||'0',10);
+  if(t<steps.length){
+    const next = steps[t](el.src); el.dataset.t = String(t+1);
+    if(next!==el.src){ el.src = next; return; }
+  }
+  const ph = document.createElement('div');
+  ph.className = (el.className?el.className+' ':'')+'ph';
+  ph.innerHTML = (el.dataset.label||'?').replace('#','<br>#');
+  el.replaceWith(ph);
 }
 
 function setDetailTab(t){ S.detailTab=t; render(); }
@@ -868,7 +889,7 @@ function detailScreen(){
   <div class="backbtn" onclick="S.screen='search';render()">← Nouvelle recherche</div>
   <div class="card reveal">
     <div class="selected-card">
-      <img src="${c.img||''}">
+      ${imgHtml(c,'')}
       <div>
         <div style="font-weight:700;font-size:17px">${displayName(c.name)}</div>
         <div class="footnote">${c.setName} · ${c.number}${c.year?' · '+c.year:''}</div>
@@ -1013,7 +1034,7 @@ function basisHtml(){
       }).join('')}
     </table>
     <div class="footnote">Prix le plus bas par état pour les annonces <b>${LANGUAGES.find(l=>l.key===S.language).label}</b> (jusqu'à 5 annonces listées), marché Cardmarket (EUR).
-      ${S.priceData.cardmarketIsFallback?' Prix de repli agrégé, non spécifique à cette langue (détail indisponible cette fois).':''}
+      ${S.priceData.cardmarketIsFallback?' <b>⚠️ Estimation</b> : seul le prix moyen Cardmarket est disponible (pas le détail par état ni par langue). Les prix par état sont déduits avec des coefficients indicatifs, identiques pour toutes les langues.':''}
       ${S.priceData.source==='demo'?' Exemple — le serveur fournira les vrais prix par état.':''}</div>
     <div style="height:14px"></div>
     <div class="section-title">🛒 Dernières ventes eBay</div>

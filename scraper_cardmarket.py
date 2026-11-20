@@ -154,3 +154,98 @@ async def get_cardmarket_prices(product_url: str, per_bucket_limit: int = 5) -> 
         return non_empty
     finally:
         await context.close()
+
+
+# ======================================================================
+# Retrouver la page Cardmarket d'une carte (quand aucun lien officiel n'est
+# connu, ex. séries très récentes absentes de pokemontcg.io).
+#
+# Méthode : recherche Cardmarket par nom, puis on choisit le résultat dont
+# l'URL contient le nom de la SÉRIE (les URL Cardmarket ont la forme
+# /Pokemon/Products/Singles/<Série>/<Carte>) et, si possible, le numéro.
+# ⚠️ Non testé en réel : voir /debug/shot et /debug/info dans main.py pour
+# voir ce que ton serveur obtient réellement de Cardmarket.
+# ======================================================================
+SEARCH_URL = "https://www.cardmarket.com/fr/Pokemon/Products/Search?searchString={q}"
+PRODUCT_LINK_SELECTOR = 'a[href*="/Pokemon/Products/Singles/"]'
+
+
+def _slug(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", (s or "").lower()).strip("-")
+
+
+def _tokens(s: str) -> list[str]:
+    return [t for t in _slug(s).split("-") if len(t) >= 3 or t.isdigit()]
+
+
+def _score_candidate(href: str, text: str, name: str, set_name: str, number: str) -> int:
+    h = _slug(href.split("/Singles/", 1)[-1])
+    txt = _slug(text)
+    score = 0
+    st = _tokens(set_name)
+    if st:
+        score += int(10 * sum(1 for t in st if t in h) / len(st))   # nom de série dans l'URL
+    nt = _tokens(name)
+    if nt and all(t in h for t in nt):
+        score += 3
+    num = str(number or "").lstrip("0")
+    if num and re.search(rf"(?<![0-9a-z]){re.escape(num)}(?![0-9a-z])", f"{h}-{txt}"):
+        score += 4
+    return score
+
+
+async def find_product_url(name: str, set_name: str | None, number: str | None) -> str:
+    from urllib.parse import quote_plus
+    context, page = await new_page()
+    try:
+        resp = await page.goto(SEARCH_URL.format(q=quote_plus(name)),
+                               wait_until="domcontentloaded", timeout=25000)
+        if resp is None or resp.status >= 400:
+            raise CardmarketScrapeError(
+                f"recherche Cardmarket refusée (statut {resp.status if resp else '?'}) — "
+                "probablement une protection anti-robot sur l'adresse du serveur")
+        try:
+            await page.wait_for_selector(PRODUCT_LINK_SELECTOR, timeout=10000)
+        except Exception:
+            raise CardmarketScrapeError(
+                "aucun résultat de recherche lisible (page de vérification anti-robot, "
+                "ou structure de la page différente)")
+        cands = await page.eval_on_selector_all(
+            PRODUCT_LINK_SELECTOR,
+            "els => els.map(e => ({href: e.href, text: (e.closest('tr, .row, [class*=\"table-body\"] > div') || e.parentElement || e).innerText || ''}))")
+        best, best_score, seen = None, -1, set()
+        for c in cands:
+            if c["href"] in seen:
+                continue
+            seen.add(c["href"])
+            sc = _score_candidate(c["href"], c["text"], name, set_name or "", number or "")
+            if sc > best_score:
+                best, best_score = c["href"], sc
+        if not best or best_score < 8:
+            raise CardmarketScrapeError(
+                f"aucun résultat Cardmarket ne correspond à « {name} » dans « {set_name} » "
+                f"(meilleur score {best_score})")
+        return best
+    finally:
+        await context.close()
+
+
+async def snapshot(url: str, png: bool = False):
+    """Outil de diagnostic : ce que le navigateur du serveur voit sur une page."""
+    context, page = await new_page()
+    try:
+        resp = await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+        await page.wait_for_timeout(2500)
+        if png:
+            return await page.screenshot(type="png")
+        text = (await page.inner_text("body"))[:1500]
+        return {
+            "status": resp.status if resp else None,
+            "finalUrl": page.url,
+            "title": await page.title(),
+            "rowCount": len(await page.query_selector_all(ROW_SELECTOR)),
+            "productLinks": len(await page.query_selector_all(PRODUCT_LINK_SELECTOR)),
+            "textStart": text,
+        }
+    finally:
+        await context.close()

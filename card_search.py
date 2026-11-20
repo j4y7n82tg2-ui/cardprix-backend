@@ -233,3 +233,12 @@ async def get_card(card_id: str) -> dict | None:
     card = _simplify_ptcg(c)
     card.pop("_rd", None)
     return card
+
+
+async def raw_tcgdex_card(card_id: str) -> dict | None:
+    """Diagnostic : réponse brute de TCGdex pour une carte (sans les attaques)."""
+    c = await _get_json(f"{TCGDEX}/cards/{card_id}")
+    if isinstance(c, dict):
+        for k in ("attacks", "abilities", "description"):
+            c.pop(k, None)
+    return c
