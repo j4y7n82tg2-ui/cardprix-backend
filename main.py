@@ -29,9 +29,9 @@ from fastapi.responses import FileResponse, Response
 from pathlib import Path
 
 import card_search
-from scraper_cardmarket import get_cardmarket_prices, find_product_url, snapshot, CardmarketScrapeError
+from scraper_cardmarket import get_cardmarket_prices, find_product_url, snapshot, debug_rows, CardmarketScrapeError
 from scraper_ebay import get_ebay_sold, EbayScrapeError
-from browser_pool import shutdown as shutdown_browser
+from browser_pool import shutdown as shutdown_browser, uses_scraping_service
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("cardprix")
@@ -112,7 +112,7 @@ async def price(cardId: str = Query(...), lang: str = Query("FR")):
             # Aucun lien officiel connu (ex. série très récente) : on le retrouve par recherche.
             url = await find_product_url(card.get("name"), card.get("setName"), card.get("number"))
             card["cardmarketUrl"] = url
-        result["cardmarket"] = await get_cardmarket_prices(url)
+        result["cardmarket"] = await get_cardmarket_prices(url, lang=lang)
         result["availableLanguages"] = list(result["cardmarket"].keys())
     except CardmarketScrapeError as e:
         log.warning("cardmarket scrape failed for %s: %s", cardId, e)
@@ -168,6 +168,21 @@ async def debug_shot(url: str):
         return Response(await snapshot(url, png=True), media_type="image/png")
     except Exception as e:
         raise HTTPException(502, f"Capture impossible : {e}")
+
+
+@app.get("/debug/rows", include_in_schema=False)
+async def debug_rows_ep(url: str):
+    """Chemin réel de récupération : statut, nombre de lignes, HTML de la 1re annonce, résultat parsé."""
+    _check_debug_url(url)
+    try:
+        return await debug_rows(url)
+    except Exception as e:
+        raise HTTPException(502, f"Lecture impossible : {e}")
+
+
+@app.get("/debug/config", include_in_schema=False)
+async def debug_config():
+    return {"scrapingService": uses_scraping_service()}
 
 
 @app.get("/debug/info", include_in_schema=False)

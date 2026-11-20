@@ -18,7 +18,8 @@ augmentent le risque de blocage et la zone grise CGU.
 """
 import re
 from urllib.parse import quote_plus
-from browser_pool import new_page
+from bs4 import BeautifulSoup
+from browser_pool import fetch_html, explain_http_error
 
 # --- Sélecteurs à vérifier/ajuster en premier si le scraping échoue ---
 ITEM_SELECTOR = "li.s-item"
@@ -55,7 +56,7 @@ class EbayScrapeError(Exception):
 def _parse_price_eur(txt: str) -> float | None:
     if not txt:
         return None
-    m = re.search(r"([\d.,]+)\s*€", txt) or re.search(r"EUR\s*([\d.,]+)", txt)
+    m = (re.search(r"([\d.,]+)\s*(?:€|EUR)", txt) or re.search(r"(?:€|EUR)\s*([\d.,]+)", txt))
     if not m:
         return None
     raw = m.group(1).replace(".", "").replace(",", ".")
@@ -65,48 +66,34 @@ def _parse_price_eur(txt: str) -> float | None:
         return None
 
 
+def parse_sold(html: str, limit: int = 5) -> list[dict]:
+    soup = BeautifulSoup(html, "lxml")
+    out = []
+    for item in soup.select(ITEM_SELECTOR):
+        if len(out) >= limit:
+            break
+        title_el = item.select_one(TITLE_SELECTOR)
+        price_el = item.select_one(PRICE_SELECTOR)
+        date_el = item.select_one(DATE_SELECTOR)
+        if not title_el or not price_el:
+            continue
+        title = title_el.get_text(" ", strip=True)
+        price = _parse_price_eur(price_el.get_text(" ", strip=True))
+        date = date_el.get_text(" ", strip=True) if date_el else None
+        if price is not None and title:
+            out.append({"title": title, "price": price, "date": date})
+    return out
+
+
 async def get_ebay_sold(query: str, limit: int = 5, lang: str | None = None) -> list[dict]:
-    """Renvoie une liste de {title, price, date} pour les dernières ventes conclues.
-    `lang` (FR/EN/DE/IT/ES/JP) ajoute un mot-clé de langue à la recherche
-    (voir LANG_KEYWORDS) — best-effort, voir note en haut du fichier."""
+    """Dernières ventes conclues [{title, price, date}] ; `lang` ajoute un mot-clé de langue (best-effort)."""
     full_query = query
     if lang and lang in LANG_KEYWORDS:
         full_query = f"{query} {LANG_KEYWORDS[lang]}"
-    url = SEARCH_URL.format(query=quote_plus(full_query))
-    context, page = await new_page()
-    try:
-        resp = await page.goto(url, wait_until="domcontentloaded", timeout=20000)
-        if resp is None or resp.status >= 400:
-            raise EbayScrapeError(f"eBay a répondu avec le statut {resp.status if resp else '?'}")
-
-        try:
-            await page.wait_for_selector(ITEM_SELECTOR, timeout=8000)
-        except Exception:
-            raise EbayScrapeError(
-                "Résultats introuvables — eBay a peut-être affiché une page de "
-                "vérification/CAPTCHA, ou la structure de la page a changé."
-            )
-
-        items = await page.query_selector_all(ITEM_SELECTOR)
-        out = []
-        for item in items:
-            if len(out) >= limit:
-                break
-            title_el = await item.query_selector(TITLE_SELECTOR)
-            price_el = await item.query_selector(PRICE_SELECTOR)
-            date_el = await item.query_selector(DATE_SELECTOR)
-            if not title_el or not price_el:
-                continue
-            title = (await title_el.inner_text()).strip()
-            if title.lower().startswith("objet d'occasion") and len(title) < 5:
-                continue  # ligne d'en-tête/placeholder eBay
-            price = _parse_price_eur(await price_el.inner_text())
-            date = (await date_el.inner_text()).strip() if date_el else None
-            if price is not None:
-                out.append({"title": title, "price": price, "date": date})
-
-        if not out:
-            raise EbayScrapeError("Aucune vente exploitable trouvée dans les résultats.")
-        return out
-    finally:
-        await context.close()
+    status, html, info = await fetch_html(SEARCH_URL.format(query=quote_plus(full_query)), wait_selector=ITEM_SELECTOR)
+    if status != 200:
+        raise EbayScrapeError(explain_http_error(status, info))
+    out = parse_sold(html, limit)
+    if not out:
+        raise EbayScrapeError("aucune vente lisible (page de vérification ou structure différente)")
+    return out

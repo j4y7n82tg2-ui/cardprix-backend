@@ -1,51 +1,33 @@
 """
-Scraping de la page produit Cardmarket pour récupérer, PAR LANGUE puis PAR
-ÉTAT (Mint / Near Mint / Excellent / Good / Light Played / Played / Poor),
-les prix des annonces actuellement en vente les plus basses — ce qui
-correspond à la demande d'origine : "les 5 premiers prix par état", avec en
-plus le filtre par langue qui a été demandé ensuite (ULTRA IMPORTANT côté
-produit : une carte française et une carte anglaise n'ont pas la même cote).
+Cardmarket — prix des annonces PAR LANGUE puis PAR ÉTAT (MT/NM/EX/GD/LP/PL/PO),
+jusqu'à 5 plus bas prix par (langue, état), comme demandé.
 
-La page produit Cardmarket liste déjà les annonces de TOUTES les langues
-mélangées, chaque ligne précisant la langue de l'exemplaire (icône drapeau).
-On scrape donc la page UNE SEULE FOIS et on regroupe par (langue, état) —
-pas besoin de rescraper à chaque changement de langue côté appli.
+Pour que le prix soit celui de la langue choisie, la page produit est chargée
+avec le filtre de langue de Cardmarket (?language=<code>) ; chaque annonce est
+de toute façon re-classée selon l'icône de langue lue dans la ligne.
 
-⚠️ IMPORTANT — à lire avant de déployer :
-Les sélecteurs CSS ci-dessous sont une estimation raisonnable de la
-structure du site au moment de l'écriture (nov. 2026), construite à partir
-de la description publique de la page, PAS d'un test en conditions réelles
-(ce sandbox n'a pas accès réseau vers cardmarket.com pour vérifier).
-Il est très probable qu'il faille ajuster `ROW_SELECTOR` / `CONDITION_SELECTOR`
-/ `PRICE_SELECTOR` / `LANGUAGE_SELECTOR` après un premier essai réel — ouvre
-la page produit dans un navigateur, inspecte le tableau des annonces, et
-corrige ces constantes en conséquence. Le reste du fichier n'a pas besoin
-de changer.
-
-Si Cardmarket bloque la requête (page de vérification / erreur), la fonction
-lève CardmarketScrapeError — l'appelant (main.py) doit alors se replier sur
-`fallbackCardmarketPrice` fourni par l'API Pokemon TCG (qui n'est pas filtré
-par langue — c'est un repli dégradé, à signaler clairement dans l'appli).
+⚠️ NON TESTÉ sur le vrai site (pas d'accès réseau depuis l'environnement de
+développement). Les sélecteurs ci-dessous sont des estimations ; utilise
+/debug/rows (main.py) pour voir le HTML réel d'une ligne et les ajuster.
+Le parsing (parse_listings) est, lui, testé hors ligne sur du HTML d'exemple.
 """
 import re
-from browser_pool import new_page
+from urllib.parse import quote_plus, urlparse, urlencode, parse_qsl, urlunparse
+from bs4 import BeautifulSoup
+from browser_pool import fetch_html, explain_http_error, new_page
 
 # --- Sélecteurs à vérifier/ajuster en premier si le scraping échoue ---
-ROW_SELECTOR = "div.article-row"          # une ligne d'annonce dans le tableau
-CONDITION_SELECTOR = "span.article-condition, span[data-condition]"
-PRICE_SELECTOR = "span.price-container, span.color-primary"
-# L'icône de langue est généralement une image/span avec un attribut
-# title/alt du type "Français", "English", "FR", "EN"...
-LANGUAGE_SELECTOR = "span[data-language] img, span.icon[title], img[alt]"
+ROW_SELECTOR = "div.article-row"
+CONDITION_SELECTOR = "span.article-condition, a.article-condition, span[data-condition], .product-attributes .badge"
+PRICE_SELECTOR = "span.price-container, span.color-primary, .mobile-offer-container .color-primary"
+LANGUAGE_SELECTOR = "span[data-language], span.icon[title], span.icon[data-bs-original-title], img[alt]"
 # -----------------------------------------------------------------------
 
+CONDITIONS = ["MT", "NM", "EX", "GD", "LP", "PL", "PO"]
 CONDITION_MAP = {
-    "MT": "MT", "NM": "NM", "EX": "EX", "GD": "GD",
-    "LP": "LP", "PL": "PL", "PO": "PO",
     "mint": "MT", "near mint": "NM", "excellent": "EX", "good": "GD",
     "light played": "LP", "played": "PL", "poor": "PO",
 }
-
 LANGUAGE_MAP = {
     "fr": "FR", "fra": "FR", "français": "FR", "francais": "FR", "french": "FR",
     "en": "EN", "eng": "EN", "english": "EN", "anglais": "EN",
@@ -54,118 +36,106 @@ LANGUAGE_MAP = {
     "es": "ES", "spa": "ES", "español": "ES", "spanish": "ES", "espagnol": "ES",
     "jp": "JP", "jap": "JP", "japanese": "JP", "japonais": "JP", "日本語": "JP",
 }
-
 SUPPORTED_LANGS = ["FR", "EN", "DE", "IT", "ES", "JP"]
+# Codes de langue du filtre Cardmarket (?language=) — à vérifier sur le site.
+LANG_CODE = {"EN": 1, "FR": 2, "DE": 3, "ES": 4, "IT": 5, "JP": 7}
+
+_ATTRS = ("title", "data-bs-original-title", "data-original-title", "aria-label", "alt")
 
 
 class CardmarketScrapeError(Exception):
     pass
 
 
+def _texts(el) -> list[str]:
+    out = [el.get_text(" ", strip=True)]
+    for a in _ATTRS:
+        v = el.get(a)
+        if v:
+            out.append(str(v))
+    return [t for t in out if t]
+
+
 def _parse_price(txt: str) -> float | None:
-    if not txt:
-        return None
-    # Cardmarket affiche les prix en "12,34 €" (format EU)
-    m = re.search(r"([\d.,]+)\s*€", txt)
+    m = re.search(r"([\d.,]+)\s*€", txt or "")
     if not m:
         return None
-    raw = m.group(1).replace(".", "").replace(",", ".")
     try:
-        return float(raw)
+        return float(m.group(1).replace(".", "").replace(",", "."))
     except ValueError:
         return None
 
 
-def _parse_condition(txt: str) -> str | None:
-    if not txt:
-        return None
-    key = txt.strip().lower()
-    return CONDITION_MAP.get(key) or CONDITION_MAP.get(txt.strip())
+def _parse_condition(el) -> str | None:
+    for t in _texts(el):
+        m = re.search(r"\b(MT|NM|EX|GD|LP|PL|PO)\b", t.upper())
+        if m:
+            return m.group(1)
+        k = CONDITION_MAP.get(t.strip().lower())
+        if k:
+            return k
+    return None
 
 
-def _parse_language(txt: str) -> str | None:
-    if not txt:
-        return None
-    return LANGUAGE_MAP.get(txt.strip().lower())
+def _parse_language(el) -> str | None:
+    for t in _texts(el):
+        k = LANGUAGE_MAP.get(t.strip().lower())
+        if k:
+            return k
+    return None
 
 
-async def get_cardmarket_prices(product_url: str, per_bucket_limit: int = 5) -> dict:
-    """
-    Renvoie {"FR": {"MT": [prix,...], "NM": [...], ...}, "EN": {...}, ...} —
-    jusqu'à `per_bucket_limit` prix les plus bas trouvés pour chaque
-    (langue, état), triés croissant. Une langue absente du résultat signifie
-    qu'aucune annonce dans cette langue n'a été trouvée sur la page.
-    """
+def parse_listings(html: str, per_bucket_limit: int = 5) -> dict:
+    """HTML d'une page produit -> {langue: {état: [5 plus bas prix]}} (langues non vides seulement)."""
+    soup = BeautifulSoup(html, "lxml")
+    buckets = {lang: {c: [] for c in CONDITIONS} for lang in SUPPORTED_LANGS}
+    for row in soup.select(ROW_SELECTOR):
+        cond_el = row.select_one(CONDITION_SELECTOR)
+        price_el = row.select_one(PRICE_SELECTOR)
+        lang_el = row.select_one(LANGUAGE_SELECTOR)
+        if not (cond_el and price_el and lang_el):
+            continue
+        cond = _parse_condition(cond_el)
+        lang = _parse_language(lang_el)
+        price = _parse_price(price_el.get_text(" ", strip=True))
+        if cond and lang and price is not None:
+            buckets[lang][cond].append(price)
+    out = {}
+    for lang, conds in buckets.items():
+        for c in conds:
+            conds[c] = sorted(conds[c])[:per_bucket_limit]
+        if any(conds.values()):
+            out[lang] = conds
+    return out
+
+
+def _with_language(url: str, lang: str | None) -> str:
+    code = LANG_CODE.get((lang or "").upper())
+    if not code:
+        return url
+    u = urlparse(url)
+    q = dict(parse_qsl(u.query))
+    q["language"] = str(code)
+    return urlunparse(u._replace(query=urlencode(q)))
+
+
+async def get_cardmarket_prices(product_url: str, lang: str | None = None, per_bucket_limit: int = 5) -> dict:
     if not product_url:
         raise CardmarketScrapeError("Aucune URL Cardmarket fournie pour cette carte.")
-
-    context, page = await new_page()
-    try:
-        resp = await page.goto(product_url, wait_until="domcontentloaded", timeout=20000)
-        if resp is None or resp.status >= 400:
-            raise CardmarketScrapeError(f"Cardmarket a répondu avec le statut {resp.status if resp else '?'}")
-
-        try:
-            await page.wait_for_selector(ROW_SELECTOR, timeout=8000)
-        except Exception:
-            raise CardmarketScrapeError(
-                "Tableau des annonces introuvable — la page a peut-être changé de "
-                "structure, ou Cardmarket a affiché une page de vérification."
-            )
-
-        rows = await page.query_selector_all(ROW_SELECTOR)
-        buckets: dict[str, dict[str, list[float]]] = {
-            lang: {k: [] for k in ["MT", "NM", "EX", "GD", "LP", "PL", "PO"]}
-            for lang in SUPPORTED_LANGS
-        }
-
-        for row in rows:
-            cond_el = await row.query_selector(CONDITION_SELECTOR)
-            price_el = await row.query_selector(PRICE_SELECTOR)
-            lang_el = await row.query_selector(LANGUAGE_SELECTOR)
-            if not cond_el or not price_el or not lang_el:
-                continue
-            cond = _parse_condition(await cond_el.inner_text())
-            price = _parse_price(await price_el.inner_text())
-            lang_raw = (await lang_el.get_attribute("title")
-                        or await lang_el.get_attribute("alt")
-                        or await lang_el.inner_text())
-            lang = _parse_language(lang_raw)
-            if not (cond and lang and price is not None):
-                continue
-            bucket = buckets[lang][cond]
-            if len(bucket) < per_bucket_limit:
-                bucket.append(price)
-
-        for lang in buckets:
-            for cond in buckets[lang]:
-                buckets[lang][cond].sort()
-
-        # On ne garde que les langues pour lesquelles on a trouvé au moins un prix,
-        # pour que le frontend sache clairement quelles langues ont des données.
-        non_empty = {
-            lang: conds for lang, conds in buckets.items()
-            if any(conds.values())
-        }
-
-        if not non_empty:
-            raise CardmarketScrapeError("Aucune annonce exploitable trouvée sur la page.")
-
-        return non_empty
-    finally:
-        await context.close()
+    status, html, info = await fetch_html(_with_language(product_url, lang), wait_selector=ROW_SELECTOR)
+    if status != 200:
+        raise CardmarketScrapeError(explain_http_error(status, info))
+    result = parse_listings(html, per_bucket_limit)
+    if not result:
+        raise CardmarketScrapeError(
+            "page chargée mais aucune annonce lisible (structure différente de celle attendue, "
+            "ou page de vérification) — voir /debug/rows")
+    return result
 
 
-# ======================================================================
-# Retrouver la page Cardmarket d'une carte (quand aucun lien officiel n'est
-# connu, ex. séries très récentes absentes de pokemontcg.io).
-#
-# Méthode : recherche Cardmarket par nom, puis on choisit le résultat dont
-# l'URL contient le nom de la SÉRIE (les URL Cardmarket ont la forme
-# /Pokemon/Products/Singles/<Série>/<Carte>) et, si possible, le numéro.
-# ⚠️ Non testé en réel : voir /debug/shot et /debug/info dans main.py pour
-# voir ce que ton serveur obtient réellement de Cardmarket.
-# ======================================================================
+# ---------------------------------------------------------------------------
+# Retrouver la page Cardmarket d'une carte quand aucun lien officiel n'est connu
+# ---------------------------------------------------------------------------
 SEARCH_URL = "https://www.cardmarket.com/fr/Pokemon/Products/Search?searchString={q}"
 PRODUCT_LINK_SELECTOR = 'a[href*="/Pokemon/Products/Singles/"]'
 
@@ -184,7 +154,7 @@ def _score_candidate(href: str, text: str, name: str, set_name: str, number: str
     score = 0
     st = _tokens(set_name)
     if st:
-        score += int(10 * sum(1 for t in st if t in h) / len(st))   # nom de série dans l'URL
+        score += int(10 * sum(1 for t in st if t in h) / len(st))
     nt = _tokens(name)
     if nt and all(t in h for t in nt):
         score += 3
@@ -194,58 +164,66 @@ def _score_candidate(href: str, text: str, name: str, set_name: str, number: str
     return score
 
 
+def pick_product_url(html: str, name: str, set_name: str | None, number: str | None) -> str:
+    soup = BeautifulSoup(html, "lxml")
+    best, best_score, seen = None, -1, set()
+    for a in soup.select(PRODUCT_LINK_SELECTOR):
+        href = a.get("href", "")
+        if href.startswith("/"):
+            href = "https://www.cardmarket.com" + href
+        if href in seen:
+            continue
+        seen.add(href)
+        row = a.find_parent(["tr", "div"])
+        text = row.get_text(" ", strip=True) if row else a.get_text(" ", strip=True)
+        sc = _score_candidate(href, text, name, set_name or "", number or "")
+        if sc > best_score:
+            best, best_score = href, sc
+    if not best:
+        raise CardmarketScrapeError("aucun résultat de recherche lisible (page de vérification ou structure différente)")
+    if best_score < 8:
+        raise CardmarketScrapeError(
+            f"aucun résultat ne correspond à « {name} » dans « {set_name} » (meilleur score {best_score})")
+    return best
+
+
 async def find_product_url(name: str, set_name: str | None, number: str | None) -> str:
-    from urllib.parse import quote_plus
-    context, page = await new_page()
-    try:
-        resp = await page.goto(SEARCH_URL.format(q=quote_plus(name)),
-                               wait_until="domcontentloaded", timeout=25000)
-        if resp is None or resp.status >= 400:
-            raise CardmarketScrapeError(
-                f"recherche Cardmarket refusée (statut {resp.status if resp else '?'}) — "
-                "probablement une protection anti-robot sur l'adresse du serveur")
-        try:
-            await page.wait_for_selector(PRODUCT_LINK_SELECTOR, timeout=10000)
-        except Exception:
-            raise CardmarketScrapeError(
-                "aucun résultat de recherche lisible (page de vérification anti-robot, "
-                "ou structure de la page différente)")
-        cands = await page.eval_on_selector_all(
-            PRODUCT_LINK_SELECTOR,
-            "els => els.map(e => ({href: e.href, text: (e.closest('tr, .row, [class*=\"table-body\"] > div') || e.parentElement || e).innerText || ''}))")
-        best, best_score, seen = None, -1, set()
-        for c in cands:
-            if c["href"] in seen:
-                continue
-            seen.add(c["href"])
-            sc = _score_candidate(c["href"], c["text"], name, set_name or "", number or "")
-            if sc > best_score:
-                best, best_score = c["href"], sc
-        if not best or best_score < 8:
-            raise CardmarketScrapeError(
-                f"aucun résultat Cardmarket ne correspond à « {name} » dans « {set_name} » "
-                f"(meilleur score {best_score})")
-        return best
-    finally:
-        await context.close()
+    status, html, info = await fetch_html(SEARCH_URL.format(q=quote_plus(name)), wait_selector=PRODUCT_LINK_SELECTOR)
+    if status != 200:
+        raise CardmarketScrapeError("recherche Cardmarket : " + explain_http_error(status, info))
+    return pick_product_url(html, name, set_name, number)
 
 
+# --------------------------------------------------------------- diagnostic
 async def snapshot(url: str, png: bool = False):
-    """Outil de diagnostic : ce que le navigateur du serveur voit sur une page."""
+    """Ce que voit le navigateur LOCAL du serveur (capture ou résumé texte)."""
     context, page = await new_page()
     try:
         resp = await page.goto(url, wait_until="domcontentloaded", timeout=25000)
         await page.wait_for_timeout(2500)
         if png:
             return await page.screenshot(type="png")
-        text = (await page.inner_text("body"))[:1500]
         return {
             "status": resp.status if resp else None,
             "finalUrl": page.url,
             "title": await page.title(),
             "rowCount": len(await page.query_selector_all(ROW_SELECTOR)),
-            "productLinks": len(await page.query_selector_all(PRODUCT_LINK_SELECTOR)),
-            "textStart": text,
+            "textStart": (await page.inner_text("body"))[:1500],
         }
     finally:
         await context.close()
+
+
+async def debug_rows(url: str) -> dict:
+    """Chemin réel de récupération (service ou navigateur) : statut, nb de lignes, HTML de la 1re ligne."""
+    status, html, info = await fetch_html(url, wait_selector=ROW_SELECTOR)
+    soup = BeautifulSoup(html or "", "lxml")
+    rows = soup.select(ROW_SELECTOR)
+    return {
+        "status": status, "info": info, "htmlLength": len(html or ""),
+        "title": soup.title.get_text(strip=True) if soup.title else None,
+        "rowCount": len(rows),
+        "firstRowHtml": str(rows[0])[:3000] if rows else None,
+        "parsed": parse_listings(html or "") if status == 200 else None,
+        "textStart": soup.get_text(" ", strip=True)[:600],
+    }
