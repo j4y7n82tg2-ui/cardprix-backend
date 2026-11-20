@@ -22,10 +22,10 @@ from bs4 import BeautifulSoup
 from browser_pool import fetch_html, explain_http_error
 
 # --- Sélecteurs à vérifier/ajuster en premier si le scraping échoue ---
-ITEM_SELECTOR = "li.s-item"
-TITLE_SELECTOR = ".s-item__title"
-PRICE_SELECTOR = ".s-item__price"
-DATE_SELECTOR = ".s-item__caption, .POSITIVE"
+ITEM_SELECTOR = "li.s-item, li.s-card, ul.srp-results > li"
+TITLE_SELECTOR = ".s-item__title, .s-card__title"
+PRICE_SELECTOR = ".s-item__price, .s-card__price"
+DATE_SELECTOR = ".s-item__caption, .s-card__caption, .POSITIVE"
 # -----------------------------------------------------------------------
 
 SEARCH_URL = (

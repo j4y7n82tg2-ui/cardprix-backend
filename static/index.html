@@ -894,6 +894,13 @@ function imgFail(el){
   el.replaceWith(ph);
 }
 
+function ageText(sec){
+  if(sec===undefined||sec===null) return '';
+  if(sec<90) return "à l'instant";
+  if(sec<3600) return 'il y a '+Math.round(sec/60)+' min';
+  if(sec<86400) return 'il y a '+Math.round(sec/3600)+' h';
+  return 'il y a '+Math.round(sec/86400)+' j';
+}
 function setDetailTab(t){ S.detailTab=t; render(); }
 
 function detailScreen(){
@@ -1010,6 +1017,7 @@ function vintedTabHtml(c){
       <div class="range">Fourchette conseillée : ${fmtPrice(vinted.low)} – ${fmtPrice(vinted.high)}</div>
     `:`<div class="empty">Pas assez de données pour cet état dans cette langue.${S.priceData.availableLanguages?` Langues disponibles pour cette carte : ${S.priceData.availableLanguages.map(k=>LANGUAGES.find(l=>l.key===k)?.flag||k).join(' ')}.`:''}</div>`}
     <div class="cond">État sélectionné : <b>${condLabel}</b></div>
+    ${S.priceData.ageSeconds!==undefined?`<div class="footnote" style="margin-top:6px">⏱ Données mises à jour ${ageText(S.priceData.ageSeconds)}${S.priceData.refreshing?' · actualisation en cours':''}</div>`:''}
   </div>
 
   <div class="card reveal">

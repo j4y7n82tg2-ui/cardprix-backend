@@ -166,7 +166,7 @@ def _score_candidate(href: str, text: str, name: str, set_name: str, number: str
 
 def pick_product_url(html: str, name: str, set_name: str | None, number: str | None) -> str:
     soup = BeautifulSoup(html, "lxml")
-    best, best_score, seen = None, -1, set()
+    scored, seen = [], set()
     for a in soup.select(PRODUCT_LINK_SELECTOR):
         href = a.get("href", "")
         if href.startswith("/"):
@@ -176,14 +176,18 @@ def pick_product_url(html: str, name: str, set_name: str | None, number: str | N
         seen.add(href)
         row = a.find_parent(["tr", "div"])
         text = row.get_text(" ", strip=True) if row else a.get_text(" ", strip=True)
-        sc = _score_candidate(href, text, name, set_name or "", number or "")
-        if sc > best_score:
-            best, best_score = href, sc
-    if not best:
+        scored.append((_score_candidate(href, text, name, set_name or "", number or ""), href))
+    if not scored:
         raise CardmarketScrapeError("aucun résultat de recherche lisible (page de vérification ou structure différente)")
-    if best_score < 8:
+    scored.sort(key=lambda x: -x[0])
+    best_score, best = scored[0]
+    runner = scored[1][0] if len(scored) > 1 else -1
+    # On préfère une estimation à des prix d'une AUTRE carte : score mini 7 et net avantage sur le suivant.
+    if best_score < 7 or (best_score < 8 and best_score - runner < 2):
+        cands = " ; ".join(f"{sc}:{h.split('/Singles/')[-1]}" for sc, h in scored[:3])
         raise CardmarketScrapeError(
-            f"aucun résultat ne correspond à « {name} » dans « {set_name} » (meilleur score {best_score})")
+            f"aucun résultat ne correspond à « {name} » dans « {set_name} » n°{number} "
+            f"(meilleurs candidats : {cands})")
     return best
 
 
@@ -214,16 +218,20 @@ async def snapshot(url: str, png: bool = False):
         await context.close()
 
 
-async def debug_rows(url: str) -> dict:
-    """Chemin réel de récupération (service ou navigateur) : statut, nb de lignes, HTML de la 1re ligne."""
-    status, html, info = await fetch_html(url, wait_selector=ROW_SELECTOR)
+async def debug_rows(url: str, sel: str | None = None) -> dict:
+    """Chemin réel de récupération (service ou navigateur) : statut, nb de lignes, HTML de la 1re ligne.
+    `sel` : sélecteur CSS à tester à la place de celui des annonces Cardmarket."""
+    status, html, info = await fetch_html(url, wait_selector=sel or ROW_SELECTOR)
     soup = BeautifulSoup(html or "", "lxml")
-    rows = soup.select(ROW_SELECTOR)
+    try:
+        rows = soup.select(sel or ROW_SELECTOR)
+    except Exception as e:
+        return {"error": f"sélecteur invalide: {e}"}
     return {
         "status": status, "info": info, "htmlLength": len(html or ""),
         "title": soup.title.get_text(strip=True) if soup.title else None,
         "rowCount": len(rows),
         "firstRowHtml": str(rows[0])[:3000] if rows else None,
-        "parsed": parse_listings(html or "") if status == 200 else None,
+        "parsed": parse_listings(html or "") if status == 200 and not sel else None,
         "textStart": soup.get_text(" ", strip=True)[:600],
     }
