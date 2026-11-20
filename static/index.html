@@ -1,0 +1,1027 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>CardPrix — Estimation de prix Vinted</title>
+<style>
+:root{
+  --bg:#0b0d12; --bg2:#12151c; --card:#171b24; --card2:#1d2230;
+  --border:#2a3042; --text:#eef1f7; --muted:#9aa3b8; --accent:#5b8cff;
+  --accent2:#8b5cf6; --good:#3ddc84; --warn:#ffb648; --bad:#ff5c6c;
+  --radius:16px; --shadow:0 8px 24px rgba(0,0,0,.35);
+}
+@media (prefers-color-scheme: light){
+  :root:not([data-theme="dark"]){
+    --bg:#f4f5f9; --bg2:#ffffff; --card:#ffffff; --card2:#f0f2f8;
+    --border:#e1e4ee; --text:#161a24; --muted:#636d84; --accent:#3f6bff;
+    --accent2:#7c4df0; --shadow:0 8px 24px rgba(30,40,80,.08);
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0b0d12; --bg2:#12151c; --card:#171b24; --card2:#1d2230;
+  --border:#2a3042; --text:#eef1f7; --muted:#9aa3b8; --accent:#5b8cff;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  padding-bottom:40px;}
+.wrap{max-width:560px;margin:0 auto;padding:18px 16px 60px}
+header{display:flex;align-items:center;justify-content:space-between;padding:6px 2px 18px}
+.brand{display:flex;align-items:center;gap:10px}
+.logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+  display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;color:#fff}
+h1{font-size:17px;margin:0;font-weight:700}
+.sub{font-size:11px;color:var(--muted);margin-top:1px}
+.iconbtn{width:36px;height:36px;border-radius:10px;border:1px solid var(--border);background:var(--card);
+  color:var(--text);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:16px}
+.banner{background:var(--card2);border:1px solid var(--border);border-radius:12px;padding:10px 12px;font-size:12.5px;
+  color:var(--muted);margin-bottom:16px;display:flex;gap:8px;align-items:flex-start}
+.banner b{color:var(--text)}
+.card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:14px;box-shadow:var(--shadow)}
+.search-box{display:flex;gap:8px}
+input[type=text],select{width:100%;padding:12px 13px;border-radius:12px;border:1px solid var(--border);
+  background:var(--card2);color:var(--text);font-size:15px;outline:none}
+input[type=text]:focus,select:focus{border-color:var(--accent)}
+.btn{padding:12px 16px;border-radius:12px;border:none;background:var(--accent);color:#fff;font-weight:600;
+  font-size:14.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}
+.btn.secondary{background:var(--card2);color:var(--text);border:1px solid var(--border)}
+.btn.block{width:100%}
+.results{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+.result-row{display:flex;gap:12px;align-items:center;padding:10px;border-radius:12px;background:var(--card2);
+  border:1px solid var(--border);cursor:pointer;transition:.15s}
+.result-row:active{transform:scale(.98)}
+.thumb{width:40px;height:56px;border-radius:6px;background:var(--bg2);flex-shrink:0;object-fit:cover;border:1px solid var(--border)}
+.rinfo{flex:1;min-width:0}
+.rname{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rset{font-size:11.5px;color:var(--muted)}
+.selected-card{display:flex;gap:14px;align-items:center}
+.selected-card img{width:64px;height:90px;border-radius:8px;object-fit:cover;border:1px solid var(--border)}
+label{font-size:12px;color:var(--muted);display:block;margin:12px 0 6px;font-weight:600;text-transform:uppercase;letter-spacing:.3px}
+.pillrow{display:flex;gap:6px;flex-wrap:wrap}
+.pill{padding:7px 12px;border-radius:999px;border:1px solid var(--border);background:var(--card2);font-size:12.5px;
+  cursor:pointer;color:var(--muted)}
+.pill.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.price-hero{text-align:center;padding:20px 10px}
+.price-hero .amount{font-size:34px;font-weight:800;background:linear-gradient(135deg,var(--accent),var(--accent2));
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.price-hero .range{font-size:13px;color:var(--muted);margin-top:4px}
+.price-hero .cond{font-size:12px;color:var(--muted);margin-top:8px}
+.section-title{font-size:13px;font-weight:700;margin:4px 0 10px;display:flex;align-items:center;gap:6px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+td{padding:7px 4px;border-bottom:1px solid var(--border)}
+tr:last-child td{border-bottom:none}
+td.cond-name{color:var(--muted)}
+td.cond-price{text-align:right;font-weight:600}
+tr.current td{color:var(--accent);font-weight:700}
+.sale-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+.sale-row:last-child{border-bottom:none}
+.sale-meta{color:var(--muted);font-size:11.5px}
+.sale-price{font-weight:700}
+.badge{font-size:9.5px;padding:2px 7px;border-radius:6px;background:var(--card2);color:var(--muted);
+  text-transform:uppercase;letter-spacing:.3px;border:1px solid var(--border)}
+.badge.live{background:rgba(61,220,132,.15);color:var(--good);border-color:transparent}
+.badge.demo{background:rgba(255,182,72,.15);color:var(--warn);border-color:transparent}
+.footnote{font-size:11px;color:var(--muted);line-height:1.5;margin-top:4px}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.5);display:none;align-items:flex-end;justify-content:center;z-index:50}
+.modal-bg.open{display:flex}
+.modal{background:var(--bg2);border-radius:18px 18px 0 0;padding:20px 18px 28px;width:100%;max-width:560px;
+  border:1px solid var(--border);border-bottom:none}
+.modal h3{margin:0 0 14px;font-size:15px}
+.row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--border)}
+.row:last-child{border-bottom:none}
+.toggle{width:44px;height:26px;border-radius:999px;background:var(--border);position:relative;cursor:pointer;flex-shrink:0}
+.toggle.on{background:var(--accent)}
+.toggle::after{content:'';position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:.2s}
+.toggle.on::after{left:21px}
+.empty{text-align:center;padding:30px 10px;color:var(--muted);font-size:13px}
+.loading{display:flex;align-items:center;justify-content:center;gap:8px;padding:20px;color:var(--muted);font-size:13px}
+.spin{width:16px;height:16px;border-radius:50%;border:2px solid var(--border);border-top-color:var(--accent);
+  animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.backbtn{font-size:13px;color:var(--accent);cursor:pointer;display:inline-flex;align-items:center;gap:4px;margin-bottom:12px}
+.scanbtn{display:flex;align-items:center;justify-content:center;gap:8px;padding:14px;border-radius:12px;
+  border:1.5px dashed var(--border);background:var(--card2);color:var(--text);font-weight:600;font-size:14px;
+  cursor:pointer;width:100%;margin-bottom:12px}
+.scanbtn .ic{font-size:18px}
+.scan-preview{display:flex;gap:12px;align-items:center;margin-bottom:12px;background:var(--card2);
+  border:1px solid var(--border);border-radius:12px;padding:10px}
+.scan-preview img{width:48px;height:64px;object-fit:cover;border-radius:8px;border:1px solid var(--border);flex-shrink:0}
+.scan-status{flex:1;min-width:0;font-size:12.5px;color:var(--muted)}
+.scan-status b{color:var(--text)}
+.progressbar{height:5px;border-radius:3px;background:var(--border);overflow:hidden;margin-top:6px}
+.progressbar .fill{height:100%;background:var(--accent);transition:width .2s}
+.clearx{width:26px;height:26px;border-radius:50%;border:none;background:var(--border);color:var(--text);
+  flex-shrink:0;cursor:pointer;font-size:13px}
+.match-badge{font-size:9.5px;padding:2px 6px;border-radius:5px;background:rgba(61,220,132,.15);color:var(--good);
+  margin-left:6px;white-space:nowrap}
+.or-sep{display:flex;align-items:center;gap:10px;margin:2px 0 12px;color:var(--muted);font-size:11px}
+.or-sep::before,.or-sep::after{content:'';flex:1;height:1px;background:var(--border)}
+
+/* --- Overlay de scan plein écran (effet "premium") --- */
+.scan-overlay{position:fixed;inset:0;background:rgba(6,7,12,.94);backdrop-filter:blur(6px);
+  z-index:80;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:20px}
+.scan-frame{position:relative;width:min(240px,70vw);aspect-ratio:5/7;border-radius:16px;overflow:hidden;
+  box-shadow:0 0 50px rgba(91,140,255,.4);border:2px solid var(--accent)}
+.scan-frame img{width:100%;height:100%;object-fit:cover;display:block}
+.scan-line{position:absolute;left:0;right:0;top:0;height:3px;
+  background:linear-gradient(90deg,transparent,#fff,var(--accent2),transparent);
+  box-shadow:0 0 16px var(--accent);animation:scanmove 1.3s ease-in-out infinite}
+@keyframes scanmove{0%{top:2%}50%{top:96%}100%{top:2%}}
+.scan-overlay-status{color:#fff;font-size:14.5px;font-weight:700;letter-spacing:.2px}
+.progressbar.wide{width:min(240px,70vw)}
+@media (prefers-reduced-motion: reduce){ .scan-line{animation:none;top:50%} }
+
+/* --- Onglets fiche carte --- */
+.tabs{display:flex;gap:6px;margin-bottom:14px;background:var(--card2);border:1px solid var(--border);
+  border-radius:12px;padding:4px}
+.tab{flex:1;text-align:center;padding:9px 0;border-radius:9px;font-size:13px;font-weight:700;color:var(--muted);
+  cursor:pointer;transition:.15s;user-select:none}
+.tab.active{background:var(--accent);color:#fff}
+.info-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.info-item{background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+.info-label{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--muted);margin-bottom:3px}
+.info-value{font-size:14px;font-weight:700}
+.copybox{background:var(--card2);border:1px solid var(--border);border-radius:10px;padding:12px;font-size:13px;line-height:1.55}
+.price-hero.big .amount{font-size:44px}
+.reveal{animation:revealIn .35s ease both}
+@keyframes revealIn{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion: reduce){ .reveal{animation:none} }
+.linklike{color:var(--accent);text-decoration:none;font-weight:600;font-size:13px;display:inline-flex;align-items:center;gap:4px}
+.lang-row{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;-webkit-overflow-scrolling:touch}
+.lang-chip{flex-shrink:0;display:flex;align-items:center;gap:5px;padding:7px 11px;border-radius:999px;
+  border:1px solid var(--border);background:var(--card2);font-size:12.5px;font-weight:600;color:var(--muted);cursor:pointer}
+.lang-chip.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+.lang-note{font-size:9px;padding:1px 6px;border-radius:5px;background:rgba(255,182,72,.15);color:var(--warn);margin-left:5px}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+
+<input type="file" id="scanInput" accept="image/*" capture="environment" style="display:none"
+  onchange="handleScanFile(this.files[0])">
+
+<div class="modal-bg" id="settingsModal">
+  <div class="modal">
+    <h3>Réglages</h3>
+    <div class="row">
+      <div>
+        <div style="font-weight:600;font-size:13.5px">Mode démo</div>
+        <div class="footnote">Données d'exemple, aucun serveur requis</div>
+      </div>
+      <div class="toggle" id="demoToggle" onclick="toggleDemo()"></div>
+    </div>
+    <div id="apiUrlRow" style="padding-top:10px">
+      <label style="margin-top:0">Adresse du serveur (API)</label>
+      <input type="text" id="apiUrlInput" placeholder="https://ton-backend.exemple.com">
+      <div class="footnote" style="margin-top:8px">C'est l'adresse où tu as déployé le dossier <code>backend/</code> fourni séparément (Render, Railway, Fly.io, un VPS...). Tant qu'il n'est pas déployé, reste en mode démo.</div>
+    </div>
+    <button class="btn block" style="margin-top:16px" onclick="closeSettings()">Fermer</button>
+  </div>
+</div>
+
+<script>
+/* ============ Données de démonstration ============
+   Utilisées quand "Mode démo" est actif, pour montrer le fonctionnement
+   complet de l'app sans backend réel connecté. Les vraies données viendront
+   du serveur (scraping eBay + Cardmarket) une fois déployé. */
+/* cardmarket : imbriqué par LANGUE puis par ÉTAT, jusqu'à 5 prix (les plus
+   bas d'abord) — même format que ce que renverra le serveur réel. `name`
+   est toujours le nom anglais canonique (voir NAME_FR) : l'affichage se
+   traduit via displayName(), comme le ferait l'appli connectée au vrai
+   backend (la base de cartes elle-même ne connaît que l'anglais).
+   Les écarts de prix FR/EN ci-dessous sont illustratifs mais reflètent une
+   réalité connue du marché vintage (une Charizard Base Set anglaise se
+   négocie nettement plus cher que la version française). */
+const DEMO_CARDS = [
+  {id:'base1-4', name:'Charizard', setName:'Base Set', number:'4/102', year:1999,
+   series:'Base', rarity:'Rare Holo', artist:'Mitsuhiro Arita',
+   cardmarketUrl:'https://www.cardmarket.com/en/Pokemon/Products/Singles/Base-Set/Charizard-Holo',
+   img:'https://images.pokemontcg.io/base1/4.png',
+   cardmarket:{
+     FR:{MT:[620,645,660],NM:[480,495,510,520],EX:[330,345,360],GD:[210,225],LP:[140,150,160],PL:[85,92],PO:[45]},
+     EN:{MT:[980,1020,1060],NM:[740,760,790,820],EX:[520,540,560],GD:[340,360],LP:[220,235,250],PL:[130,145],PO:[70]},
+     DE:{MT:[520,540],NM:[400,415,430],EX:[270,285],GD:[175,185],LP:[115,125],PL:[70,78],PO:[38]}
+   },
+   ebaySales:{
+     FR:[{date:'14 nov. 2026', price:445, cond:'NM / Light Played'},
+         {date:'11 nov. 2026', price:510, cond:'Near Mint'},
+         {date:'07 nov. 2026', price:398, cond:'Excellent'},
+         {date:'03 nov. 2026', price:462, cond:'Near Mint'},
+         {date:'29 oct. 2026', price:355, cond:'Excellent'}],
+     EN:[{date:'15 nov. 2026', price:780, cond:'Near Mint'},
+         {date:'12 nov. 2026', price:905, cond:'Mint'},
+         {date:'09 nov. 2026', price:650, cond:'Excellent'},
+         {date:'05 nov. 2026', price:812, cond:'Near Mint'},
+         {date:'31 oct. 2026', price:598, cond:'Excellent'}]
+   }},
+  {id:'swsh4-20', name:'Eevee VMAX', setName:'Épée et Bouclier — Voltage Éclatant', number:'20/185', year:2021,
+   series:'Épée et Bouclier', rarity:'Rare Holo VMAX', artist:'5ban Graphics',
+   cardmarketUrl:'https://www.cardmarket.com/en/Pokemon/Products/Singles/Vivid-Voltage/Eevee-VMAX-20',
+   img:'https://images.pokemontcg.io/swsh4/20.png',
+   cardmarket:{
+     FR:{MT:[58,61,63],NM:[42,44,46,48],EX:[28,30,31],GD:[18,19],LP:[11,12,13],PL:[7,8],PO:[4]},
+     EN:{MT:[72,75,78],NM:[54,56,58,60],EX:[36,38,40],GD:[23,25],LP:[15,16],PL:[9,10],PO:[5]}
+   },
+   ebaySales:{
+     FR:[{date:'16 nov. 2026', price:39, cond:'Near Mint'},
+         {date:'13 nov. 2026', price:45, cond:'Mint'},
+         {date:'09 nov. 2026', price:33, cond:'Excellent'},
+         {date:'05 nov. 2026', price:41, cond:'Near Mint'},
+         {date:'30 oct. 2026', price:37, cond:'Near Mint'}],
+     EN:[{date:'16 nov. 2026', price:52, cond:'Near Mint'},
+         {date:'10 nov. 2026', price:60, cond:'Mint'},
+         {date:'02 nov. 2026', price:45, cond:'Excellent'}]
+   }},
+  {id:'sv3pt5-6', name:'Pikachu', setName:'Écarlate et Violet — 151', number:'6/165', year:2023,
+   series:'Écarlate et Violet', rarity:'Commune', artist:'Atsuko Nishida',
+   cardmarketUrl:'https://www.cardmarket.com/en/Pokemon/Products/Singles/151/Pikachu-6',
+   img:'https://images.pokemontcg.io/sv3pt5/6.png',
+   cardmarket:{
+     FR:{MT:[4.2,4.5,4.8],NM:[3.1,3.3,3.4,3.6],EX:[2.1,2.3,2.4],GD:[1.4,1.5],LP:[0.9,1.0,1.1],PL:[0.6,0.7],PO:[0.3]},
+     EN:{MT:[4.5,4.8,5.0],NM:[3.3,3.5,3.7],EX:[2.2,2.4],GD:[1.5,1.6],LP:[1.0,1.1],PL:[0.6,0.7],PO:[0.3]}
+   },
+   ebaySales:{
+     FR:[{date:'15 nov. 2026', price:2.8, cond:'Near Mint'},
+         {date:'12 nov. 2026', price:3.5, cond:'Mint'},
+         {date:'08 nov. 2026', price:2.4, cond:'Excellent'},
+         {date:'04 nov. 2026', price:3.0, cond:'Near Mint'},
+         {date:'31 oct. 2026', price:2.6, cond:'Near Mint'}],
+     EN:[{date:'14 nov. 2026', price:3.2, cond:'Near Mint'},
+         {date:'06 nov. 2026', price:3.8, cond:'Mint'}]
+   }},
+  {id:'neo1-9', name:'Lugia', setName:'Neo Genesis', number:'9/111', year:2000,
+   series:'Neo', rarity:'Rare Holo', artist:'Ken Sugimori',
+   cardmarketUrl:'https://www.cardmarket.com/en/Pokemon/Products/Singles/Neo-Genesis/Lugia-Holo',
+   img:'https://images.pokemontcg.io/neo1/9.png',
+   cardmarket:{
+     FR:{MT:[280,295,310],NM:[210,220,230,240],EX:[150,160,170],GD:[95,105],LP:[60,68,75],PL:[35,40],PO:[18]},
+     EN:{MT:[520,545,570],NM:[390,405,420,440],EX:[260,275,290],GD:[170,180],LP:[110,120],PL:[65,72],PO:[32]}
+   },
+   ebaySales:{
+     FR:[{date:'13 nov. 2026', price:205, cond:'Near Mint'},
+         {date:'09 nov. 2026', price:240, cond:'Mint'},
+         {date:'02 nov. 2026', price:165, cond:'Excellent'}],
+     EN:[{date:'16 nov. 2026', price:410, cond:'Near Mint'},
+         {date:'11 nov. 2026', price:475, cond:'Mint'},
+         {date:'04 nov. 2026', price:330, cond:'Excellent'}]
+   }}
+];
+
+/* Grille de décote indicative par état (en % du prix "Near Mint" Cardmarket).
+   Ce sont des repères d'usage courant sur le marché de la carte à l'unité,
+   PAS des chiffres publiés officiellement par Cardmarket ou eBay — à affiner
+   avec de vraies données une fois le serveur branché. */
+const CONDITIONS = [
+  {key:'MT', label:'Mint'},
+  {key:'NM', label:'Near Mint'},
+  {key:'EX', label:'Excellent'},
+  {key:'GD', label:'Good'},
+  {key:'LP', label:'Light Played'},
+  {key:'PL', label:'Played'},
+  {key:'PO', label:'Poor'}
+];
+
+/* ============ Langue de la carte ============
+   ULTRA IMPORTANT (demande explicite) : le prix d'une carte Pokémon dépend
+   fortement de sa langue d'impression — une Dracaufeu Base Set française et
+   anglaise n'ont pas du tout la même cote. Cardmarket vend d'ailleurs les
+   cartes par langue (chaque annonce précise la langue de l'exemplaire), donc
+   tout le pipeline de prix (Cardmarket ET eBay) doit être filtré par langue,
+   pas juste par état. */
+const LANGUAGES = [
+  {key:'FR', label:'Français', flag:'🇫🇷', vintedTag:null},
+  {key:'EN', label:'English',  flag:'🇬🇧', vintedTag:'VO anglaise'},
+  {key:'DE', label:'Deutsch',  flag:'🇩🇪', vintedTag:'VO allemande'},
+  {key:'IT', label:'Italiano', flag:'🇮🇹', vintedTag:'VO italienne'},
+  {key:'ES', label:'Español',  flag:'🇪🇸', vintedTag:'VO espagnole'},
+  {key:'JP', label:'日本語',    flag:'🇯🇵', vintedTag:'VO japonaise'}
+];
+
+/* La base de cartes (API Pokemon TCG) ne connaît les cartes QUE sous leur
+   nom anglais — en interne, `card.name` est donc TOUJOURS le nom anglais
+   canonique, et on traduit juste à l'affichage/la recherche. Cette table
+   couvre la génération 1 (151, de loin la plus échangée en collection
+   vintage) + quelques incontournables des générations suivantes — pas
+   l'intégralité des ~1300 Pokémon. Pour un nom absent de la liste, la
+   recherche et l'affichage retombent simplement sur l'anglais : ça marche
+   toujours, juste sans traduction française. */
+const NAME_FR = {
+  Bulbasaur:'Bulbizarre',Ivysaur:'Herbizarre',Venusaur:'Florizarre',Charmander:'Salamèche',
+  Charmeleon:'Reptincel',Charizard:'Dracaufeu',Squirtle:'Carapuce',Wartortle:'Carabaffe',
+  Blastoise:'Tortank',Caterpie:'Chenipan',Metapod:'Chrysacier',Butterfree:'Papilusion',
+  Weedle:'Aspicot',Kakuna:'Coconfort',Beedrill:'Dardargnan',Pidgey:'Roucool',
+  Pidgeotto:'Roucoups',Pidgeot:'Roucarnage',Rattata:'Rattata',Raticate:'Rattatac',
+  Spearow:'Piafabec',Fearow:'Rapasdepic',Ekans:'Abo',Arbok:'Arbok',Pikachu:'Pikachu',
+  Raichu:'Raichu',Sandshrew:'Sabelette',Sandslash:'Sablaireau',Nidorina:'Nidorina',
+  Nidoqueen:'Nidoqueen',Nidorino:'Nidorino',Nidoking:'Nidoking',Clefairy:'Mélofée',
+  Clefable:'Mélodelfe',Vulpix:'Goupix',Ninetales:'Feunard',Jigglypuff:'Rondoudou',
+  Wigglytuff:'Grodoudou',Zubat:'Nosferapti',Golbat:'Nosferalto',Oddish:'Mystherbe',
+  Gloom:'Ortide',Vileplume:'Rafflesia',Paras:'Paras',Parasect:'Parasect',
+  Venonat:'Mimitoss',Venomoth:'Aéromite',Diglett:'Taupiqueur',Dugtrio:'Triopikeur',
+  Meowth:'Miaouss',Persian:'Persian',Psyduck:'Psykokwak',Golduck:'Akwakwak',
+  Mankey:'Férosinge',Primeape:'Colossinge',Growlithe:'Caninos',Arcanine:'Arcanin',
+  Poliwag:'Ptitard',Poliwhirl:'Têtarte',Poliwrath:'Tartard',Abra:'Abra',Kadabra:'Kadabra',
+  Alakazam:'Alakazam',Machop:'Machoc',Machoke:'Machopeur',Machamp:'Mackogneur',
+  Bellsprout:'Chétiflor',Weepinbell:'Boustiflor',Victreebel:'Empiflor',Tentacool:'Tentacool',
+  Tentacruel:'Tentacruel',Geodude:'Racaillou',Graveler:'Gravalanch',Golem:'Grolem',
+  Ponyta:'Ponyta',Rapidash:'Galopa',Slowpoke:'Ramoloss',Slowbro:'Flagadoss',
+  Magnemite:'Magnéti',Magneton:'Magnéton',"Farfetch'd":'Canarticho',Doduo:'Doduo',
+  Dodrio:'Dodrio',Seel:'Otaria',Dewgong:'Lamantine',Grimer:'Tadmorv',Muk:'Grotadmorv',
+  Shellder:'Kokiyas',Cloyster:'Crustabri',Gastly:'Fantominus',Haunter:'Spectrum',
+  Gengar:'Ectoplasma',Onix:'Onix',Drowzee:'Soporifik',Hypno:'Hypnomade',Krabby:'Krabby',
+  Kingler:'Krabboss',Voltorb:'Voltorbe',Electrode:'Électrode',Exeggcute:'Noeunoeuf',
+  Exeggutor:'Noadkoko',Cubone:'Osselait',Marowak:'Ossatueur',Hitmonlee:'Kicklee',
+  Hitmonchan:'Tygnon',Lickitung:'Excelangue',Koffing:'Smogo',Weezing:'Smogogo',
+  Rhyhorn:'Rhinocorne',Rhydon:'Rhinoféros',Chansey:'Leveinard',Tangela:'Saquedeneu',
+  Kangaskhan:'Kangourex',Horsea:'Hypotrempe',Seadra:'Hypocéan',Goldeen:'Poissirène',
+  Seaking:'Poissoroy',Staryu:'Stari',Starmie:'Staross','Mr. Mime':'M. Mime',
+  Scyther:'Insécateur',Jynx:'Lippoutou',Electabuzz:'Élektek',Magmar:'Magmar',
+  Pinsir:'Scarabrute',Tauros:'Tauros',Magikarp:'Magicarpe',Gyarados:'Léviator',
+  Lapras:'Lokhlass',Ditto:'Métamorph',Eevee:'Évoli',Vaporeon:'Aquali',Jolteon:'Voltali',
+  Flareon:'Pyroli',Porygon:'Porygon',Omanyte:'Amonita',Omastar:'Amonistar',Kabuto:'Kabuto',
+  Kabutops:'Kabutops',Aerodactyl:'Ptéra',Snorlax:'Ronflex',Articuno:'Artikodin',
+  Zapdos:'Électhor',Moltres:'Sulfura',Dratini:'Minidraco',Dragonair:'Draco',
+  Dragonite:'Dracolosse',Mewtwo:'Mewtwo',Mew:'Mew',
+  // quelques incontournables hors génération 1
+  Lugia:'Lugia','Ho-Oh':'Ho-Oh',Celebi:'Celebi',Umbreon:'Noctali',Espeon:'Mentali',
+  Sylveon:'Nymphali',Leafeon:'Phyllali',Glaceon:'Givrali',Lucario:'Lucario',
+  Rayquaza:'Rayquaza',Garchomp:'Carchacrok',Greninja:'Amphinobi',Gardevoir:'Gardevoir'
+};
+
+/* Traduit un texte saisi/scanné (potentiellement en français) vers le nom
+   anglais canonique utilisé par la base de cartes. Si rien ne correspond,
+   renvoie le texte tel quel (fonctionne si c'est déjà de l'anglais). */
+function translateToEnglish(input){
+  const q = (input||'').trim().toLowerCase();
+  if(!q) return input;
+  for(const en in NAME_FR){
+    if(en.toLowerCase()===q || NAME_FR[en].toLowerCase()===q) return en;
+  }
+  return input;
+}
+function displayName(englishName){
+  if(S.language==='FR' && NAME_FR[englishName]) return NAME_FR[englishName];
+  return englishName;
+}
+
+// Quand l'appli est servie par le serveur CardPrix lui-même (Render ou local),
+// elle appelle directement ce même serveur : pas de réglage à faire.
+var SELF_HOSTED = /\.onrender\.com$/.test(location.hostname) || (location.hostname==='localhost' && location.port==='8000');
+
+// Stockage navigateur sécurisé : peut être bloqué (fenêtre privée, aperçu...).
+function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+let S = {
+  screen:'search',
+  query:'',
+  results:[],
+  selected:null,
+  condition:'NM',
+  loading:false,
+  demo: (function(){ if(SELF_HOSTED) return false; var a=lsGet('cp_api'), d=lsGet('cp_demo'); return d===null ? !a : d!=='0'; })(),
+  apiUrl: SELF_HOSTED ? location.origin : (lsGet('cp_api') || ''),
+  language: 'FR',
+  // --- scan (reconnaissance de carte par photo) ---
+  scanImage:null, scanStep:null, scanPhase:null, scanProgress:0, scanResult:null, scanError:null,
+  // --- fiche carte ---
+  detailTab:'infos', showBasis:false
+};
+
+/* ============ Scan de carte (OCR dans le navigateur) ============
+   On n'utilise PAS de reconnaissance d'image "pleine" (comparaison visuelle
+   à une base d'images) : trop lourd à faire soi-même de façon fiable. On
+   s'appuie plutôt sur ce que font déjà la plupart des scanners de cartes
+   grand public — lire le texte imprimé sur la carte (nom + numéro du type
+   "4/102") via OCR, puis chercher ce texte dans la base de cartes.
+
+   Pour que ce soit le plus rapide et fiable possible SANS service payant :
+   1. On redimensionne et on passe l'image en niveaux de gris contrastés
+      (moins de données à traiter = plus rapide, texte plus net = plus fiable).
+   2. Plutôt que de lire toute la carte (illustration + texte d'attaques...),
+      on ne lit QUE les deux zones utiles : la bande du nom (haut de carte)
+      et la zone du numéro (bas gauche) — moins de bruit, lecture plus rapide
+      et plus précise que sur l'image entière.
+   3. Le moteur OCR (Tesseract.js) est gardé "chaud" en mémoire après le
+      premier scan : les scans suivants démarrent donc beaucoup plus vite.
+   4. Si ces deux zones ne donnent rien d'exploitable (cadrage inhabituel),
+      on retente automatiquement sur l'image entière en dernier recours.
+
+   Limite honnête : c'est de la lecture de texte (OCR), pas un vrai modèle
+   de vision entraîné sur des cartes Pokémon comme certaines apps premium
+   payantes. Ça marche bien sur une photo nette et droite ; une vraie percée
+   de fiabilité/vitesse au-delà de ça passerait par un service de vision
+   payant côté serveur — faisable plus tard si cette version ne suffit pas. */
+const OCR_CDN = 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js';
+
+function ensureTesseract(){
+  if(window.Tesseract) return Promise.resolve();
+  return new Promise((resolve,reject)=>{
+    const s=document.createElement('script');
+    s.src=OCR_CDN;
+    s.onload=()=>resolve();
+    s.onerror=()=>reject(new Error("Impossible de charger le moteur de reconnaissance de texte. Vérifie ta connexion et réessaie."));
+    document.head.appendChild(s);
+  });
+}
+
+let ocrWorker=null, ocrWorkerPromise=null;
+function getOcrWorker(){
+  if(ocrWorker) return Promise.resolve(ocrWorker);
+  if(ocrWorkerPromise) return ocrWorkerPromise;
+  ocrWorkerPromise = ensureTesseract().then(async ()=>{
+    ocrWorker = await Tesseract.createWorker('fra+eng', 1, {
+      logger: m=>{
+        if(m.status==='recognizing text'){
+          S.scanProgress = Math.round((m.progress||0)*100);
+          render();
+        }
+      }
+    });
+    return ocrWorker;
+  });
+  return ocrWorkerPromise;
+}
+
+function loadImageFromFile(file){
+  return new Promise((resolve,reject)=>{
+    const img = new Image();
+    img.onload=()=>resolve(img);
+    img.onerror=()=>reject(new Error("Photo illisible, réessaie."));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+/* Redimensionne (vitesse) + niveaux de gris à contraste étiré (netteté du texte). */
+function preprocessForOcr(img){
+  const maxDim = 1100;
+  const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+  const w = Math.max(1,Math.round(img.width*scale)), h = Math.max(1,Math.round(img.height*scale));
+  const canvas = document.createElement('canvas');
+  canvas.width=w; canvas.height=h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img,0,0,w,h);
+  const imgData = ctx.getImageData(0,0,w,h);
+  const d = imgData.data;
+  let min=255,max=0;
+  for(let i=0;i<d.length;i+=4){
+    const g = 0.299*d[i]+0.587*d[i+1]+0.114*d[i+2];
+    d[i]=d[i+1]=d[i+2]=g;
+    if(g<min)min=g; if(g>max)max=g;
+  }
+  const range = Math.max(1,max-min);
+  for(let i=0;i<d.length;i+=4){
+    const v = Math.min(255,Math.max(0,(d[i]-min)*255/range));
+    d[i]=d[i+1]=d[i+2]=v;
+  }
+  ctx.putImageData(imgData,0,0);
+  return canvas;
+}
+
+function cropCanvas(src, xFrac,yFrac,wFrac,hFrac){
+  const sx=Math.round(src.width*xFrac), sy=Math.round(src.height*yFrac);
+  const sw=Math.max(1,Math.round(src.width*wFrac)), sh=Math.max(1,Math.round(src.height*hFrac));
+  const out=document.createElement('canvas');
+  out.width=sw; out.height=sh;
+  out.getContext('2d').drawImage(src, sx,sy,sw,sh, 0,0,sw,sh);
+  return out;
+}
+
+/* Fonction pure (testable isolément) : à partir du texte brut lu sur la
+   carte, devine le nom et le numéro ("4/102" -> number:"4", total:"102"). */
+function parseOcrText(text){
+  const lines = (text||'').split('\n').map(l=>l.trim()).filter(Boolean);
+  let number=null, total=null;
+  const numMatch = (text||'').match(/(\d{1,4})\s*\/\s*(\d{1,4})/);
+  if(numMatch){
+    number = numMatch[1].replace(/^0+(?=\d)/,'');
+    total = numMatch[2].replace(/^0+(?=\d)/,'');
+  }
+  const STOPWORDS = /^(hp|pv|basic|stage|niveau|niveau\s*\d|evolves|energy|trainer|dresseur|objet|supporter|attaque|poké-corps|poids|taille)/i;
+  const candidates = lines.filter(l=>{
+    const letters = (l.match(/[A-Za-zÀ-ÿ]/g)||[]).length;
+    return letters>=3 && letters/l.length>0.6 && !STOPWORDS.test(l) && !/\d\s*\/\s*\d/.test(l);
+  });
+  candidates.sort((a,b)=> b.length-a.length);
+  let name = (candidates[0] || lines[0] || '').replace(/\s*\d+\s*(PV|HP)\s*$/i,'').trim();
+  return {name, number, total, rawText:text};
+}
+
+function scanPhaseLabel(){
+  return {
+    prep:'Préparation de l\'image…',
+    name:'Détection du nom…',
+    number:'Détection du numéro…',
+    fallback:'Nouvelle tentative sur l\'image complète…'
+  }[S.scanPhase] || 'Lecture de la carte…';
+}
+
+async function handleScanFile(file){
+  if(!file) return;
+  if(S.scanImage) URL.revokeObjectURL(S.scanImage);
+  S.scanImage = URL.createObjectURL(file);
+  S.scanStep = 'loading';
+  S.scanPhase = 'prep';
+  S.scanProgress = 0;
+  S.scanResult = null;
+  S.scanError = null;
+  render();
+  try{
+    const img = await loadImageFromFile(file);
+    const prepped = preprocessForOcr(img);
+    // Zones ciblées : bande du nom (haut) et coin du numéro (bas gauche).
+    // Repères approximatifs valables sur la plupart des cartes Pokémon
+    // modernes — à ajuster si besoin une fois testé sur de vraies photos.
+    const nameCrop = cropCanvas(prepped, 0.04, 0.04, 0.92, 0.22);
+    const numberCrop = cropCanvas(prepped, 0.0, 0.86, 0.55, 0.14);
+
+    const worker = await getOcrWorker();
+
+    S.scanPhase='name'; render();
+    await worker.setParameters({ tessedit_pageseg_mode:'6' }); // bloc de texte uniforme
+    const nameRes = await worker.recognize(nameCrop);
+
+    S.scanPhase='number'; render();
+    await worker.setParameters({ tessedit_pageseg_mode:'7' }); // ligne unique
+    const numberRes = await worker.recognize(numberCrop);
+
+    let parsed = parseOcrText((nameRes.data.text||'') + '\n' + (numberRes.data.text||''));
+
+    if(!parsed.name && !parsed.number){
+      // Repli : cadrage inhabituel, on retente sur l'image entière.
+      S.scanPhase='fallback'; render();
+      await worker.setParameters({ tessedit_pageseg_mode:'3' });
+      const fullRes = await worker.recognize(prepped);
+      parsed = parseOcrText(fullRes.data.text || '');
+    }
+
+    // Langue détectée à partir du nom lu : si le texte scanné correspond à
+    // la traduction française connue (et pas au nom anglais), c'est très
+    // probablement une carte française — sinon on ne touche pas au choix
+    // de langue déjà en place (l'utilisateur peut toujours corriger).
+    const guessEn = translateToEnglish(parsed.name);
+    if(guessEn !== parsed.name){
+      S.language = 'FR';
+    } else if(NAME_FR[guessEn] && guessEn.toLowerCase()===String(parsed.name).toLowerCase()){
+      S.language = 'EN';
+    }
+    S.scanResult = parsed;
+    S.scanStep = 'done';
+    S.query = parsed.name;
+    render();
+    await doSearch(parsed.name);
+  }catch(e){
+    S.scanStep = 'error';
+    S.scanError = e.message || String(e);
+    render();
+  }
+}
+
+function clearScan(){
+  if(S.scanImage) URL.revokeObjectURL(S.scanImage);
+  S.scanImage=null; S.scanStep=null; S.scanResult=null; S.scanError=null;
+  document.getElementById('scanInput').value='';
+  render();
+}
+
+/* Si une carte a été scannée et qu'un numéro a été détecté, on fait
+   remonter en premier les résultats dont le numéro correspond — c'est le
+   signal le plus fiable (le nom peut matcher plein de cartes différentes
+   à travers les sets, le numéro départage). */
+/* Le backend réel (API Pokemon TCG) renvoie un numéro "nu" (ex: "4"),
+   mais les données de démo affichent "4/102" pour plus de clarté visuelle
+   — cette fonction gère les deux formats pour que la correspondance marche
+   dans les deux cas. */
+function leadingNumber(raw){
+  const m = String(raw||'').match(/^0*(\d+)/);
+  return m ? m[1] : null;
+}
+function numberMatchesScan(cardNumber){
+  if(!S.scanResult || !S.scanResult.number) return false;
+  return leadingNumber(cardNumber) === S.scanResult.number;
+}
+function applyScanRanking(results){
+  if(!S.scanResult || !S.scanResult.number) return results;
+  return [...results].sort((a,b)=>{
+    const am = numberMatchesScan(a.number) ? 0 : 1;
+    const bm = numberMatchesScan(b.number) ? 0 : 1;
+    return am-bm;
+  });
+}
+
+function fmtPrice(v){
+  if(v==null) return '—';
+  return v.toLocaleString('fr-FR',{minimumFractionDigits: v<10?2:0, maximumFractionDigits:2}) + ' €';
+}
+
+async function doSearch(q){
+  S.query=q;
+  if(q.trim().length<2){ S.results=[]; render(); return; }
+  // La base de cartes ne connaît que l'anglais : on traduit la recherche
+  // (ex. "Dracaufeu" -> "Charizard") sans changer ce qui est affiché dans
+  // le champ, pour que la recherche en français marche normalement.
+  const term = translateToEnglish(q);
+  if(S.demo){
+    S.results = applyScanRanking(DEMO_CARDS.filter(c=>
+      (c.name+' '+(NAME_FR[c.name]||'')+' '+c.setName).toLowerCase().includes(term.toLowerCase())
+      || (c.name+' '+(NAME_FR[c.name]||'')+' '+c.setName).toLowerCase().includes(q.toLowerCase())
+    ));
+    render();
+    return;
+  }
+  if(!S.apiUrl){ S.results=[]; render(); return; }
+  S.loading=true; render();
+  try{
+    const r = await fetch(S.apiUrl.replace(/\/$/,'')+'/search?q='+encodeURIComponent(term));
+    const data = await r.json();
+    S.results = applyScanRanking(data.cards || []);
+  }catch(e){
+    S.results = [];
+    S.searchError = "Impossible de joindre le serveur (" + e.message + ").";
+  }
+  S.loading=false; render();
+}
+
+async function selectCard(card){
+  S.selected = card;
+  S.condition = 'NM';
+  S.screen='detail';
+  S.detailTab='infos';
+  S.showBasis=false;
+  S.priceData = null;
+  render();
+  await fetchPricing();
+}
+
+async function fetchPricing(){
+  const c = S.selected;
+  if(!c) return;
+  S.loading=true; render();
+  if(S.demo){
+    await new Promise(r=>setTimeout(r,450)); // simulate a real fetch for a believable demo feel
+    S.priceData = {
+      cardmarket: c.cardmarket, // imbriqué par langue, cmPrices() pioche S.language dedans
+      ebaySales: (c.ebaySales && c.ebaySales[S.language]) || [],
+      availableLanguages: Object.keys(c.cardmarket||{}),
+      source:'demo'
+    };
+    S.loading=false; render();
+    return;
+  }
+  if(!S.apiUrl){ S.loading=false; render(); return; }
+  try{
+    // `lang` sert à la recherche eBay côté serveur (Cardmarket renvoie toutes
+    // les langues en une seule fois, voir backend/scraper_cardmarket.py).
+    const r = await fetch(S.apiUrl.replace(/\/$/,'')+'/price?cardId='+encodeURIComponent(c.id)+'&lang='+encodeURIComponent(S.language));
+    const data = await r.json();
+    S.priceData = {...data, source:'live'};
+  }catch(e){
+    S.priceData = null;
+    S.priceError = "Impossible de récupérer les prix (" + e.message + ").";
+  }
+  S.loading=false; render();
+}
+
+function setLanguage(key){
+  S.language = key;
+  render();
+  fetchPricing();
+}
+
+function cmPrices(cond){
+  const pd = S.priceData;
+  if(!pd || !pd.cardmarket) return [];
+  const byLang = pd.cardmarket[S.language];
+  return (byLang && byLang[cond]) || [];
+}
+function cmLowest(cond){
+  const arr = cmPrices(cond);
+  return arr.length ? arr[0] : null;
+}
+
+function estimateVinted(){
+  const pd = S.priceData;
+  if(!pd) return null;
+  const cmPrice = cmLowest(S.condition);
+  // eBay sales: rough median of sales whose stated condition roughly matches
+  let ebayVals = (pd.ebaySales||[]).map(s=>s.price).sort((a,b)=>a-b);
+  let ebayMedian = ebayVals.length ? ebayVals[Math.floor(ebayVals.length/2)] : null;
+  let base;
+  if(cmPrice!=null && ebayMedian!=null) base = cmPrice*0.55 + ebayMedian*0.45;
+  else base = cmPrice!=null ? cmPrice : ebayMedian;
+  if(base==null) return null;
+  // Vinted = marché de revente rapide entre particuliers : on vise un prix
+  // légèrement sous le marché "collectionneur" pour vendre rapidement.
+  return { low: base*0.80, mid: base*0.88, high: base*0.97 };
+}
+
+function toggleDemo(){
+  S.demo = !S.demo;
+  lsSet('cp_demo', S.demo?'1':'0');
+  var t=document.getElementById('demoToggle'); if(t) t.classList.toggle('on', S.demo);
+  S.results=[]; S.selected=null; S.priceData=null;
+  render();
+}
+function openSettings(){
+  document.getElementById('apiUrlInput').value = S.apiUrl;
+  document.getElementById('settingsModal').classList.add('open');
+  document.getElementById('demoToggle').classList.toggle('on', S.demo);
+}
+function closeSettings(){
+  var newUrl = document.getElementById('apiUrlInput').value.trim().replace(/\/+$/,'');
+  var changed = newUrl !== S.apiUrl;
+  S.apiUrl = newUrl;
+  lsSet('cp_api', S.apiUrl);
+  // Une adresse de serveur vient d'être saisie : on quitte le mode démo automatiquement.
+  if(changed && newUrl && S.demo){ S.demo=false; lsSet('cp_demo','0'); S.results=[]; S.selected=null; S.priceData=null; }
+  document.getElementById('settingsModal').classList.remove('open');
+  render();
+}
+
+function render(){
+  const sy = window.scrollY;
+  const app = document.getElementById('app');
+
+  // Bug corrigé : on réécrit tout app.innerHTML à chaque frappe (recherche
+  // en direct), ce qui recrée le <input> comme un tout nouvel élément DOM —
+  // le navigateur lui fait alors perdre le focus, d'où l'impression que la
+  // saisie "coupe" à chaque lettre. On mémorise le champ actif et la
+  // position du curseur avant de réécrire, puis on les restaure juste après
+  // sur le nouvel élément (même id) : ça donne l'illusion d'un champ qui
+  // n'a jamais été recréé, sans avoir à réécrire tout le moteur de rendu.
+  const active = document.activeElement;
+  const activeId = (active && app.contains(active) && active.id) ? active.id : null;
+  const selStart = activeId && 'selectionStart' in active ? active.selectionStart : null;
+  const selEnd = activeId && 'selectionEnd' in active ? active.selectionEnd : null;
+
+  app.innerHTML = headerHtml() + bannerHtml() + (S.screen==='search'?searchScreen():detailScreen())
+    + (S.scanStep==='loading' ? scanOverlayHtml() : '');
+  window.scrollTo(0,sy);
+
+  if(activeId){
+    const el = document.getElementById(activeId);
+    if(el){
+      el.focus();
+      if(selStart!=null && el.setSelectionRange){
+        try{ el.setSelectionRange(selStart, selEnd); }catch(e){}
+      }
+    }
+  }
+}
+
+function scanOverlayHtml(){
+  return `<div class="scan-overlay">
+    <div class="scan-frame"><img src="${S.scanImage}"><div class="scan-line"></div></div>
+    <div class="scan-overlay-status">${scanPhaseLabel()}</div>
+    <div class="progressbar wide"><div class="fill" style="width:${S.scanProgress}%"></div></div>
+  </div>`;
+}
+
+function headerHtml(){
+  return `
+  <header>
+    <div class="brand">
+      <div class="logo">CP</div>
+      <div><h1>CardPrix</h1><div class="sub">Estimation de prix pour la revente</div></div>
+    </div>
+    <div class="iconbtn" onclick="openSettings()">⚙️</div>
+  </header>`;
+}
+
+function bannerHtml(){
+  return `<div class="banner">
+    <span class="badge ${S.demo?'demo':'live'}">${S.demo?'Démo':'Connecté'}</span>
+    <span>${S.demo
+      ? "Tu vois l'interface avec des données d'exemple. Connecte ton serveur dans ⚙️ Réglages une fois déployé pour des prix réels."
+      : (S.apiUrl ? 'Connecté à '+S.apiUrl : "Aucun serveur configuré — ouvre ⚙️ Réglages.")}</span>
+  </div>`;
+}
+
+function searchScreen(){
+  return `
+  <div class="card">
+    ${scanSectionHtml()}
+    <div class="or-sep">ou cherche par nom</div>
+    <label style="margin-top:0">Chercher une carte</label>
+    <input type="text" id="searchInput" placeholder="Ex : Dracaufeu, Évoli VMAX..." value="${S.query.replace(/"/g,'&quot;')}"
+      oninput="doSearch(this.value)">
+    ${S.demo ? `<div class="footnote" style="margin-top:8px">🧪 Mode démo : seulement ${DEMO_CARDS.length} cartes d'exemple disponibles (${DEMO_CARDS.map(c=>displayName(c.name)).join(', ')}). Connecte ton serveur dans ⚙️ pour chercher n'importe quelle carte.</div>` : ''}
+    ${S.loading ? `<div class="loading"><div class="spin"></div> Recherche…</div>` : renderResults()}
+  </div>`;
+}
+
+function scanSectionHtml(){
+  if(!S.scanStep){
+    return `<div class="scanbtn" onclick="document.getElementById('scanInput').click()">
+      <span class="ic">📷</span> Scanner une carte</div>`;
+  }
+  if(S.scanStep==='loading'){
+    return ''; // l'overlay plein écran (scanOverlayHtml) prend le relais
+  }
+  if(S.scanStep==='error'){
+    return `<div class="scan-preview">
+      <img src="${S.scanImage}">
+      <div class="scan-status" style="color:var(--bad)">${S.scanError}</div>
+      <button class="clearx" onclick="clearScan()">✕</button>
+    </div>`;
+  }
+  // done
+  const r = S.scanResult;
+  return `<div class="scan-preview">
+    <img src="${S.scanImage}">
+    <div class="scan-status">
+      <b>${r.name || 'Texte non reconnu'}</b>${r.number?` <span class="match-badge">N° ${r.number}${r.total?'/'+r.total:''} détecté</span>`:''}
+      <div>Corrige le nom ci-dessous si besoin, puis choisis la bonne carte.</div>
+    </div>
+    <button class="clearx" onclick="clearScan()">✕</button>
+  </div>`;
+}
+
+function renderResults(){
+  if(S.query.trim().length<2) return `<div class="empty">Tape au moins 2 lettres pour chercher, ou scanne une carte ci-dessus.</div>`;
+  if(S.searchError) return `<div class="empty">${S.searchError}</div>`;
+  if(!S.results.length) return `<div class="empty">Aucune carte trouvée${S.demo?' parmi les cartes de démo':''}. ${S.scanResult?'Essaie de corriger le nom ci-dessus.':(S.demo?'':'Essaie un autre nom ou vérifie l\'orthographe.')}</div>`;
+  return `<div class="results">${S.results.map(c=>{
+    const matches = numberMatchesScan(c.number);
+    return `
+    <div class="result-row" onclick='selectCard(${JSON.stringify(c).replace(/'/g,"&#39;")})'>
+      <img class="thumb" src="${c.img||''}" onerror="this.style.visibility='hidden'">
+      <div class="rinfo">
+        <div class="rname">${displayName(c.name)}${matches?`<span class="match-badge">✓ numéro</span>`:''}</div>
+        <div class="rset">${c.setName} · ${c.number}</div>
+      </div>
+    </div>`;
+  }).join('')}</div>`;
+}
+
+function setDetailTab(t){ S.detailTab=t; render(); }
+
+function detailScreen(){
+  if(!S.selected) return '';
+  const c = S.selected;
+  return `
+  <div class="backbtn" onclick="S.screen='search';render()">← Nouvelle recherche</div>
+  <div class="card reveal">
+    <div class="selected-card">
+      <img src="${c.img||''}">
+      <div>
+        <div style="font-weight:700;font-size:17px">${displayName(c.name)}</div>
+        <div class="footnote">${c.setName} · ${c.number}${c.year?' · '+c.year:''}</div>
+      </div>
+    </div>
+    <label>Langue de la carte (change le prix)</label>
+    <div class="lang-row">
+      ${LANGUAGES.map(l=>`<div class="lang-chip ${S.language===l.key?'active':''}" onclick="setLanguage('${l.key}')">
+        <span>${l.flag}</span><span>${l.label}</span>
+      </div>`).join('')}
+    </div>
+    <label>État de la carte</label>
+    <select onchange="S.condition=this.value;render()">
+      ${CONDITIONS.map(k=>`<option value="${k.key}" ${S.condition===k.key?'selected':''}>${k.label}</option>`).join('')}
+    </select>
+  </div>
+
+  <div class="tabs">
+    <div class="tab ${S.detailTab==='infos'?'active':''}" onclick="setDetailTab('infos')">🪪 Infos carte</div>
+    <div class="tab ${S.detailTab==='vinted'?'active':''}" onclick="setDetailTab('vinted')">🏷️ Vinted</div>
+  </div>
+
+  ${S.detailTab==='infos' ? infosTabHtml(c) : vintedTabHtml(c)}
+  `;
+}
+
+function infosTabHtml(c){
+  const lang = LANGUAGES.find(l=>l.key===S.language);
+  return `
+  <div class="card reveal">
+    <div class="info-grid">
+      <div class="info-item"><div class="info-label">Nom (anglais)</div><div class="info-value">${c.name||'—'}</div></div>
+      <div class="info-item"><div class="info-label">Langue sélectionnée</div><div class="info-value">${lang.flag} ${lang.label}</div></div>
+      <div class="info-item"><div class="info-label">Année</div><div class="info-value">${c.year||'—'}</div></div>
+      <div class="info-item"><div class="info-label">Série</div><div class="info-value">${c.series||'—'}</div></div>
+      <div class="info-item"><div class="info-label">Set</div><div class="info-value">${c.setName||'—'}</div></div>
+      <div class="info-item"><div class="info-label">Numéro</div><div class="info-value">${c.number||'—'}</div></div>
+      <div class="info-item"><div class="info-label">Rareté</div><div class="info-value">${c.rarity||'—'}</div></div>
+      <div class="info-item"><div class="info-label">Illustrateur</div><div class="info-value">${c.artist||'—'}</div></div>
+    </div>
+    ${c.cardmarketUrl?`<a class="linklike" style="margin-top:14px" href="${c.cardmarketUrl}" target="_blank" rel="noopener">Voir la fiche Cardmarket ↗</a>`:''}
+    <div class="footnote" style="margin-top:10px">La base de cartes utilisée (API Pokémon TCG) ne connaît les cartes que sous leur nom anglais — le nom affiché ailleurs dans l'appli est traduit automatiquement quand la traduction est connue (${Object.keys(NAME_FR).length} Pokémon couverts pour l'instant, principalement génération 1).</div>
+  </div>`;
+}
+
+/* --- Génération du titre/description Vinted --- */
+function suggestedTitle(c, condLabel){
+  const lang = LANGUAGES.find(l=>l.key===S.language);
+  const bits = [displayName(c.name)];
+  if(c.rarity && /holo|ex\b|gx\b|vmax|vstar|\bv\b/i.test(c.rarity)) bits.push(c.rarity.replace(/^Rare\s*/i,''));
+  if(c.number) bits.push(c.number.split('/')[0]);
+  if(c.setName) bits.push(c.setName);
+  if(lang.vintedTag) bits.push(lang.vintedTag); // précision cruciale pour les acheteurs/le prix (EN/DE/...)
+  bits.push(condLabel);
+  return 'Carte Pokémon ' + bits.filter(Boolean).join(' ');
+}
+const CONDITION_DESC = {
+  MT:"état impeccable, comme sortie de booster : coins et bords parfaits, surface sans aucune rayure visible.",
+  NM:"très bon état, quasi neuf : à peine quelques micro-marques invisibles à distance normale.",
+  EX:"bon état général avec de très légères traces d'usage sur les coins ou les bords, rien qui gêne le visuel.",
+  GD:"état correct avec quelques marques d'usure visibles (coins, surface), carte agréable et tout à fait collectionnable.",
+  LP:"usure modérée et visible (coins légèrement arrondis, petites rayures), bon état pour jouer ou compléter une collection.",
+  PL:"carte bien utilisée avec une usure marquée (coins, bords, surface), vendue en conséquence dans le prix.",
+  PO:"carte très abîmée (état « Poor »), pour qui cherche avant tout la carte elle-même ou pour jouer sans enjeu esthétique."
+};
+function suggestedDescription(c, condKey, condLabel){
+  const lang = LANGUAGES.find(l=>l.key===S.language);
+  const parts = [];
+  parts.push(`${displayName(c.name)}${c.number?' n°'+c.number:''}${c.setName?' — '+c.setName:''}${c.year?' ('+c.year+')':''}.`);
+  if(lang.vintedTag) parts.push(`Édition ${lang.label} (${lang.vintedTag}).`);
+  if(c.artist) parts.push(`Illustrée par ${c.artist}.`);
+  parts.push(`État : ${condLabel} — ${CONDITION_DESC[condKey]||''}`);
+  parts.push('Envoi soigné et protégé. Photos supplémentaires disponibles sur demande.');
+  return parts.join(' ');
+}
+async function copyText(elId, btn){
+  const text = document.getElementById(elId).textContent;
+  const old = btn.textContent;
+  try{
+    await navigator.clipboard.writeText(text);
+    btn.textContent='Copié ✓';
+  }catch(e){
+    btn.textContent="Sélectionne le texte manuellement";
+  }
+  setTimeout(()=>{ if(document.body.contains(btn)) btn.textContent=old; },1600);
+}
+
+function vintedTabHtml(c){
+  const vinted = estimateVinted();
+  const condLabel = CONDITIONS.find(k=>k.key===S.condition).label;
+  const title = suggestedTitle(c, condLabel);
+  const desc = suggestedDescription(c, S.condition, condLabel);
+  return `
+  ${S.loading ? `<div class="card loading"><div class="spin"></div> Analyse des prix…</div>` : ''}
+  ${!S.loading && S.priceError ? `<div class="card empty">${S.priceError}</div>` : ''}
+  ${!S.loading && S.priceData && (S.priceData.warnings||[]).length ? `
+    <div class="banner">⚠️ <span>${S.priceData.warnings.join(' ')}</span></div>` : ''}
+  ${!S.loading && S.priceData ? `
+  <div class="card price-hero big reveal">
+    <div class="footnote" style="text-transform:uppercase;letter-spacing:.5px">Prix indicatif pour Vinted</div>
+    ${vinted ? `
+      <div class="amount">${fmtPrice(vinted.mid)}</div>
+      <div class="range">Fourchette conseillée : ${fmtPrice(vinted.low)} – ${fmtPrice(vinted.high)}</div>
+    `:`<div class="empty">Pas assez de données pour cet état dans cette langue.${S.priceData.availableLanguages?` Langues disponibles pour cette carte : ${S.priceData.availableLanguages.map(k=>LANGUAGES.find(l=>l.key===k)?.flag||k).join(' ')}.`:''}</div>`}
+    <div class="cond">État sélectionné : <b>${condLabel}</b></div>
+  </div>
+
+  <div class="card reveal">
+    <div class="section-title">📝 Titre suggéré</div>
+    <div class="copybox" id="titleBox">${title}</div>
+    <button class="btn secondary block" style="margin-top:8px" onclick="copyText('titleBox', this)">Copier le titre</button>
+  </div>
+
+  <div class="card reveal">
+    <div class="section-title">📄 Description suggérée</div>
+    <div class="copybox" id="descBox">${desc}</div>
+    <button class="btn secondary block" style="margin-top:8px" onclick="copyText('descBox', this)">Copier la description</button>
+  </div>
+
+  <div class="card reveal">
+    <div class="section-title" style="cursor:pointer" onclick="S.showBasis=!S.showBasis;render()">
+      📊 Sur quoi ce prix est basé ${S.showBasis?'▾':'▸'}
+    </div>
+    ${S.showBasis ? basisHtml() : `<div class="footnote">Touche pour voir le détail (prix Cardmarket par état + dernières ventes eBay).</div>`}
+  </div>
+  ` : ''}
+  `;
+}
+
+function basisHtml(){
+  return `
+    <table>
+      ${CONDITIONS.map(k=>{
+        const arr = cmPrices(k.key);
+        return `
+        <tr class="${k.key===S.condition?'current':''}">
+          <td class="cond-name">${k.label}</td>
+          <td class="cond-price">${fmtPrice(arr.length?arr[0]:null)}
+            ${arr.length>1?`<div class="sale-meta" style="text-align:right">${arr.length} annonces : ${arr.map(fmtPrice).join(' · ')}</div>`:''}
+          </td>
+        </tr>`;
+      }).join('')}
+    </table>
+    <div class="footnote">Prix le plus bas par état pour les annonces <b>${LANGUAGES.find(l=>l.key===S.language).label}</b> (jusqu'à 5 annonces listées), marché Cardmarket (EUR).
+      ${S.priceData.cardmarketIsFallback?' Prix de repli agrégé, non spécifique à cette langue (détail indisponible cette fois).':''}
+      ${S.priceData.source==='demo'?' Exemple — le serveur fournira les vrais prix par état.':''}</div>
+    <div style="height:14px"></div>
+    <div class="section-title">🛒 Dernières ventes eBay</div>
+    ${(S.priceData.ebaySales||[]).length ? S.priceData.ebaySales.map(s=>`
+        <div class="sale-row">
+          <div><div>${fmtPrice(s.price)}</div><div class="sale-meta">${s.cond}</div></div>
+          <div class="sale-meta">${s.date}</div>
+        </div>`).join('') : `<div class="empty">Aucune vente récente trouvée.</div>`}
+    <div class="footnote">On combine ces deux sources (55% Cardmarket / 45% médiane eBay) puis on ajuste légèrement
+      à la baisse pour une revente rapide entre particuliers. Estimation indicative, pas une garantie de vente à ce prix.</div>
+  `;
+}
+
+render();
+</script>
+</body>
+</html>

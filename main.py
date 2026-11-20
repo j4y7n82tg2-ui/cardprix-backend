@@ -25,6 +25,8 @@ import time
 import logging
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from pathlib import Path
 
 import card_search
 from scraper_cardmarket import get_cardmarket_prices, CardmarketScrapeError
@@ -136,3 +138,15 @@ async def price(cardId: str = Query(...), lang: str = Query("FR")):
 
     _cache_set(cache_key, result)
     return result
+
+
+# --- Interface web : le serveur sert aussi l'appli (même adresse que l'API) ---
+# Ouvre simplement l'adresse du serveur dans le navigateur du téléphone.
+_INDEX = Path(__file__).parent / "static" / "index.html"
+
+
+@app.get("/", include_in_schema=False)
+async def index():
+    if not _INDEX.exists():
+        raise HTTPException(404, "Interface non trouvée (static/index.html manquant).")
+    return FileResponse(_INDEX, media_type="text/html; charset=utf-8")
