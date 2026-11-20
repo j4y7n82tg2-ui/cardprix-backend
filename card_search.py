@@ -11,9 +11,36 @@ Elle fournit aussi un prix Cardmarket agrégé "gratuit" (trend/avg/low,
 pas de détail par état) : on l'utilise comme solution de repli si notre
 scraper échoue, pour ne jamais laisser l'utilisateur sans aucun prix.
 """
+import os
+import asyncio
 import httpx
 
 POKEMONTCG_BASE = "https://api.pokemontcg.io/v2"
+
+# Clé API gratuite (optionnelle, https://dev.pokemontcg.io) : à mettre dans la
+# variable d'environnement POKEMONTCG_API_KEY sur Render. Sans clé ça marche,
+# mais l'API est plus lente et plus souvent indisponible (503/504).
+_HEADERS = {"X-Api-Key": os.environ["POKEMONTCG_API_KEY"]} if os.environ.get("POKEMONTCG_API_KEY") else {}
+
+
+async def _get_json(url: str, params: dict | None = None, retries: int = 3):
+    """GET avec nouvelles tentatives : l'API Pokemon TCG renvoie souvent des 503/504 passagers."""
+    last = None
+    for attempt in range(retries):
+        try:
+            async with httpx.AsyncClient(timeout=30, headers=_HEADERS) as client:
+                r = await client.get(url, params=params)
+            if r.status_code == 404:
+                return None
+            if r.status_code in (429, 500, 502, 503, 504):
+                last = Exception(f"HTTP {r.status_code}")
+            else:
+                r.raise_for_status()
+                return r.json()
+        except (httpx.TimeoutException, httpx.TransportError) as e:
+            last = e
+        await asyncio.sleep(1.5 * (attempt + 1))
+    raise RuntimeError(f"API Pokemon TCG indisponible après {retries} essais ({last}). Réessaie dans un instant.")
 
 
 async def search_cards(query: str, limit: int = 15) -> list[dict]:
@@ -24,12 +51,8 @@ async def search_cards(query: str, limit: int = 15) -> list[dict]:
     params = {
         "q": f'name:"{query}*"',
         "pageSize": str(limit),
-        "orderBy": "-set.releaseDate",
     }
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(f"{POKEMONTCG_BASE}/cards", params=params)
-        r.raise_for_status()
-        data = r.json()
+    data = await _get_json(f"{POKEMONTCG_BASE}/cards", params) or {}
 
     out = []
     for c in data.get("data", []):
@@ -60,11 +83,8 @@ def _simplify(c: dict) -> dict:
 
 
 async def get_card(card_id: str) -> dict | None:
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(f"{POKEMONTCG_BASE}/cards/{card_id}")
-        if r.status_code != 200:
-            return None
-        c = r.json().get("data")
-        if not c:
-            return None
+    data = await _get_json(f"{POKEMONTCG_BASE}/cards/{card_id}")
+    c = (data or {}).get("data")
+    if not c:
+        return None
     return _simplify(c)
