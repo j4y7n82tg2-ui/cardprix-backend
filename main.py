@@ -1,0 +1,138 @@
+"""
+API CardPrix — point d'entrée.
+
+Endpoints :
+  GET /search?q=...                  -> recherche de cartes (API Pokemon TCG, fiable)
+  GET /price?cardId=...&lang=FR      -> prix Cardmarket par état (TOUTES langues
+                                         renvoyées, voir "cardmarket") + dernières
+                                         ventes eBay biaisées vers `lang` (scraping,
+                                         best-effort, voir scraper_*.py)
+  GET /health                         -> vérification rapide que le serveur tourne
+
+`lang` : FR (défaut) / EN / DE / IT / ES / JP — voir frontend/index.html (LANGUAGES).
+Cardmarket est scrapé une seule fois par carte (toutes langues confondues,
+plus efficace), donc changer de langue côté appli ne redemande PAS Cardmarket
+tant que le cache est chaud ; seul eBay est re-demandé par langue.
+
+Lancer en local :
+  pip install -r requirements.txt
+  playwright install chromium --with-deps
+  uvicorn main:app --reload --port 8000
+
+Voir README.md pour le déploiement (Render / Railway / Fly.io / VPS).
+"""
+import time
+import logging
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+
+import card_search
+from scraper_cardmarket import get_cardmarket_prices, CardmarketScrapeError
+from scraper_ebay import get_ebay_sold, EbayScrapeError
+from browser_pool import shutdown as shutdown_browser
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("cardprix")
+
+app = FastAPI(title="CardPrix API")
+
+# En prod, remplace "*" par l'origine exacte de ton frontend une fois hébergé,
+# pour ne pas laisser n'importe quel site appeler ton serveur.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
+
+# Cache mémoire simple : évite de re-scraper la même carte à chaque appel
+# (plus rapide pour l'utilisateur, moins de sollicitation d'eBay/Cardmarket,
+# donc aussi moins de risque de blocage anti-robot).
+_cache: dict[str, tuple[float, dict]] = {}
+CACHE_TTL_SECONDS = 6 * 3600
+
+
+def _cache_get(key: str):
+    hit = _cache.get(key)
+    if hit and time.time() - hit[0] < CACHE_TTL_SECONDS:
+        return hit[1]
+    return None
+
+
+def _cache_set(key: str, value: dict):
+    _cache[key] = (time.time(), value)
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    await shutdown_browser()
+
+
+@app.get("/health")
+async def health():
+    return {"ok": True}
+
+
+@app.get("/search")
+async def search(q: str = Query(..., min_length=2)):
+    try:
+        cards = await card_search.search_cards(q)
+    except Exception as e:
+        log.exception("search failed")
+        raise HTTPException(502, f"Recherche de carte indisponible : {e}")
+    return {"cards": cards}
+
+
+SUPPORTED_LANGS = ["FR", "EN", "DE", "IT", "ES", "JP"]
+
+
+@app.get("/price")
+async def price(cardId: str = Query(...), lang: str = Query("FR")):
+    lang = lang.upper() if lang.upper() in SUPPORTED_LANGS else "FR"
+    cache_key = f"{cardId}:{lang}"
+    cached = _cache_get(cache_key)
+    if cached:
+        return cached
+
+    card = await card_search.get_card(cardId)
+    if not card:
+        raise HTTPException(404, "Carte introuvable.")
+
+    result = {"card": card, "cardmarket": None, "ebaySales": [], "warnings": [], "availableLanguages": []}
+
+    # --- Cardmarket : prix par (langue, état), toutes langues en un seul scrape ---
+    try:
+        result["cardmarket"] = await get_cardmarket_prices(card.get("cardmarketUrl"))
+        result["availableLanguages"] = list(result["cardmarket"].keys())
+    except CardmarketScrapeError as e:
+        log.warning("cardmarket scrape failed for %s: %s", cardId, e)
+        result["warnings"].append(
+            f"Cardmarket indisponible ({e}) — prix de repli utilisé, non spécifique à une langue."
+        )
+        if card.get("fallbackCardmarketPrice"):
+            # Pas de détail par état/langue dans ce cas : on renvoie le même
+            # prix agrégé pour chaque langue/état, clairement marqué comme
+            # repli côté frontend (voir cardmarketIsFallback).
+            p = card["fallbackCardmarketPrice"]
+            flat = {k: [p] for k in ["MT", "NM", "EX", "GD", "LP", "PL", "PO"]}
+            result["cardmarket"] = {l: dict(flat) for l in SUPPORTED_LANGS}
+            result["availableLanguages"] = SUPPORTED_LANGS
+            result["cardmarketIsFallback"] = True
+
+    # --- eBay : dernières ventes, biaisées vers la langue demandée ---
+    try:
+        query = f'pokemon {card["name"]} {card.get("setName", "")} {card.get("number", "")}'
+        sales = await get_ebay_sold(query, limit=5, lang=lang)
+        result["ebaySales"] = [
+            {"date": s["date"] or "", "price": s["price"], "cond": s["title"][:60]}
+            for s in sales
+        ]
+    except EbayScrapeError as e:
+        log.warning("ebay scrape failed for %s (%s): %s", cardId, lang, e)
+        result["warnings"].append(f"Ventes eBay indisponibles ({e}).")
+
+    if result["cardmarket"] is None and not result["ebaySales"]:
+        raise HTTPException(502, "Aucune source de prix disponible pour cette carte actuellement.")
+
+    _cache_set(cache_key, result)
+    return result
